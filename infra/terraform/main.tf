@@ -1,6 +1,13 @@
 // ---------------------------------------------------------------------------
 // Infraestrutura AWS — Glue Catalog e Crawler
 //
+// Equivalente declarativo dos scripts em infra/. Os dois caminhos criam os
+// mesmos recursos; a diferença está na abordagem.
+//
+// O bash descreve COMO criar: verifica se existe, cria se não existir.
+// O Terraform descreve O QUE deve existir, e calcula sozinho a diferença
+// entre o estado atual e o desejado.
+//
 // Uso:
 //   cd infra/terraform
 //   terraform init
@@ -8,6 +15,9 @@
 //   terraform apply
 //   terraform destroy
 //
+// Atenção: bash e Terraform não gerenciam os mesmos recursos ao mesmo
+// tempo. Para demonstrar os dois, use prefixos diferentes:
+//   terraform apply -var="prefixo=alfabetizacao_tf"
 // ---------------------------------------------------------------------------
 
 terraform {
@@ -46,7 +56,7 @@ locals {
   bucket_destino = var.bucket_destino != "" ? var.bucket_destino : var.bucket
 
   camadas = {
-    bronze = "Camada Bronze - dados brutos do INEP, fiel a origem"
+    bronze = "Camada Bronze - dados brutos do INEP via Base dos Dados, fiel a origem"
     silver = "Camada Silver - dados limpos, padronizados e integrados"
     gold   = "Camada Gold - indicadores e datasets analiticos"
   }
@@ -57,7 +67,8 @@ locals {
   // deve ser alterado pelo console — alteração manual gera divergência que
   // o próximo terraform apply desfaz sem avisar.
   //
-   tags_comuns = {
+  // aws_glue_catalog_table não aceita tags: é limitação do recurso na AWS.
+  tags_comuns = {
     Environment = var.ambiente
     ManagedBy   = "terraform"
     Pipeline    = "alfabetizacao"
@@ -75,6 +86,10 @@ locals {
     "metas_municipios",
     "metas_uf",
     "municipios",
+    // Fonte externa: schema de terceiros, que o Crawler descobre.
+    // É o caso em que a inferência automática é a ferramenta certa —
+    // diferente da Silver, onde o schema é decisão nossa.
+    "censo_escolar",
   ]
 }
 
@@ -89,6 +104,10 @@ resource "aws_glue_catalog_database" "camada" {
   // each.key já vale bronze, silver ou gold — cada database recebe a
   // própria camada sem repetição.
   //
+  // Se o terraform plan reclamar de argumento não suportado, a versão do
+  // provider é anterior ao suporte a tags neste recurso: remova a linha.
+  // A perda é pequena, porque o custo do Glue vem do Job e do Crawler,
+  // não do database, que guarda apenas metadados.
   tags = merge(local.tags_comuns, { Layer = each.key })
 }
 
