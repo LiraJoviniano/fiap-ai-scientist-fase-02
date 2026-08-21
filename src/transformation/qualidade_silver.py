@@ -301,6 +301,78 @@ def q8_conservacao_volume(consultor: Consultor, database_bronze: str) -> Resulta
     )
 
 
+def q9_chave_fato_escola(consultor: Consultor) -> Resultado:
+    """
+    A chave natural do fato de escola precisa ser única.
+
+    Sem `id_escola` no recorte extraído, não haveria como detectar
+    duplicata na fonte externa — a regra existe para que a tabela vinda de
+    terceiros receba o mesmo tratamento das demais.
+    """
+
+    duplicadas = consultor.valor("""
+        SELECT COUNT(*) FROM (
+          SELECT ano, id_escola
+          FROM fato_escola
+          GROUP BY 1, 2
+          HAVING COUNT(*) > 1
+        )
+    """)
+
+    return Resultado(
+        id="Q9",
+        nome="Unicidade da chave em fato_escola",
+        severidade=BLOQUEANTE,
+        esperado="nenhuma duplicata",
+        obtido=f"{duplicadas} chaves duplicadas",
+        aprovado=(duplicadas == "0"),
+    )
+
+
+def q10_territorio_censo(consultor: Consultor) -> Resultado:
+    """
+    A UF declarada no Censo deve bater com a derivada do código IBGE.
+
+    Duas fontes independentes para o mesmo fato territorial: divergência
+    indica código inconsistente e comprometeria o join com a Silver.
+    """
+
+    divergentes = consultor.valor("""
+        SELECT COUNT(*)
+        FROM fato_escola
+        WHERE sigla_uf <> sigla_uf_derivada
+           OR sigla_uf_derivada IS NULL
+    """)
+
+    # A dimensão passou a cobrir o universo das duas fontes, entao nenhum
+    # municipio do Censo deve ficar fora dela.
+    orfaos = consultor.valor("""
+        SELECT COUNT(DISTINCT e.id_municipio)
+        FROM fato_escola e
+        LEFT JOIN dim_territorio d ON e.id_municipio = d.id_municipio
+        WHERE d.id_municipio IS NULL
+    """)
+
+    # Diferenca de cobertura entre as fontes: informacao, nao falha
+    so_censo = consultor.valor("""
+        SELECT COUNT(*)
+        FROM dim_territorio
+        WHERE tem_censo AND NOT tem_indicador
+    """)
+
+    return Resultado(
+        id="Q10",
+        nome="Coerencia territorial do Censo Escolar",
+        severidade=ALERTA,
+        esperado="0 divergencias de UF, 0 municipios fora da dimensao",
+        obtido=(
+            f"{divergentes} divergencias, {orfaos} orfaos, "
+            f"{so_censo} municipios so no Censo"
+        ),
+        aprovado=(divergentes == "0" and orfaos == "0"),
+    )
+
+
 # ===========================================================================
 # Relatório
 # ===========================================================================
@@ -424,6 +496,8 @@ def main():
         q6_cobertura(consultor),
         q7_nulos_estruturais(consultor),
         q8_conservacao_volume(consultor, database_bronze),
+        q9_chave_fato_escola(consultor),
+        q10_territorio_censo(consultor),
     ]
 
     for r in resultados:
@@ -479,6 +553,8 @@ def main():
     bloqueios = [r for r in resultados if r.bloqueia]
 
     if bloqueios:
+        # Levantar excecao faz o Job falhar, o que interrompe o Workflow e
+        # impede que a Gold seja gerada sobre uma Silver invalida.
         nomes = ", ".join(r.id for r in bloqueios)
         raise RuntimeError(
             f"{len(bloqueios)} regra(s) bloqueante(s) reprovada(s): {nomes}"

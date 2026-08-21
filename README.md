@@ -9,11 +9,11 @@ Pipeline de dados híbrida (batch + streaming) em nuvem, construída sobre Arqui
 ![Cloud](https://img.shields.io/badge/cloud-AWS-orange)
 ![Fonte](https://img.shields.io/badge/fonte-BigQuery-4285F4)
 ![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)
-![Qualidade](https://img.shields.io/badge/qualidade-8%2F8%20aprovadas-brightgreen)
+![Qualidade](https://img.shields.io/badge/qualidade-10%2F10%20aprovadas-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > **Legenda de status:** ✅ concluído · 🚧 em andamento · ⏳ planejado
-> **Documentação:** este README apresenta para o projeto: problema, arquitetura, decisões, execução e evidências.
+> **Documentação:** este README é o documento único do projeto — problema, arquitetura, decisões, execução e evidências.
 
 ---
 
@@ -87,6 +87,14 @@ O INEP é o **produtor** do dado; a Base dos Dados é o **meio de acesso** — e
 | `meta_alfabetizacao_uf` | Meta por unidade federativa | UF × ano | `data/bronze/metas_uf/` |
 | `meta_alfabetizacao_municipio` | Meta por município | Município × ano | `data/bronze/metas_municipios/` |
 | `dicionario` | Dicionário de dados das tabelas | Coluna | `data/bronze/dicionario/` |
+
+**Fonte externa** — `basedosdados.br_inep_censo_escolar`:
+
+| Tabela | Conteúdo | Grão | Destino na Bronze |
+|---|---|---|---|
+| `escola` | Infraestrutura, matrículas e docentes | Escola × ano | `data/bronze/censo_escolar/` |
+
+O recorte é deliberado: 24 colunas de 455 e dois anos, o que reduz a varredura de 6,17 GB para 56 MB. A seleção de colunas responde por quase toda a economia — o BigQuery cobra por coluna varrida, e o filtro de rede não reduz nada, porque a coluna precisa ser lida para filtrar.
 
 **O código IBGE de município (7 dígitos) é a espinha dorsal da integração.** Todas as entidades territoriais convergem nele, e por isso ele é tratado como *string* em toda a pipeline — preservar zeros à esquerda e a semântica de código, não de número, é pré-requisito para o join funcionar. A regra precisa valer para todas as chaves, sem exceção silenciosa.
 
@@ -168,14 +176,14 @@ Toda a infraestrutura AWS é declarada em Terraform, em `infra/terraform/`. Um `
 | Recurso | Qtde | Papel |
 |---|---:|---|
 | `aws_glue_catalog_database` | 3 | Um por camada do medalhão |
-| `aws_glue_crawler` | 1 | Cataloga a Bronze — 7 include paths explícitos |
-| `aws_glue_catalog_table` | 7 | Tabelas da Silver, com schema declarado |
+| `aws_glue_crawler` | 1 | Cataloga a Bronze — 8 include paths explícitos |
+| `aws_glue_catalog_table` | 8 | Tabelas da Silver, com schema declarado |
 | `aws_glue_job` | 2 | Transformação e qualidade — Glue 4.0, 2× G.1X |
 | `aws_s3_object` | 2 | Upload dos scripts PySpark |
 | `aws_glue_workflow` | 1 | Orquestração |
 | `aws_glue_trigger` | 3 | Encadeamento condicional |
 
-**Crawler na Bronze, schema explícito na Silver.** Na Bronze o schema é da fonte, e descobri-lo automaticamente é apropriado. Na Silver o schema é produto de decisão: `atingiu_meta` é boolean porque "sem meta" não é "não atingiu"; `id_municipio` é string porque código IBGE não é número. Deixar um Crawler inferir isso terceirizaria a decisão para um palpite sobre os dados de uma execução.
+**Crawler onde o dado é de terceiros, schema declarado onde o dado é nosso.** Na Bronze — inclusive na fonte externa do Censo Escolar — o schema vem de quem produziu o dado, e descobri-lo automaticamente é apropriado. Na Silver o schema é produto de decisão: `atingiu_meta` é boolean porque "sem meta" não é "não atingiu"; `id_municipio` é string porque código IBGE não é número. Deixar um Crawler inferir isso terceirizaria a decisão para um palpite sobre os dados de uma execução.
 
 Declarar as tabelas em Terraform tem vantagem sobre `CREATE TABLE IF NOT EXISTS`: se o schema do Job mudar, o `terraform plan` acusa a divergência. O DDL veria que a tabela existe e não faria nada, deixando o Catalog descrevendo uma coisa e o Parquet contendo outra.
 
@@ -247,11 +255,12 @@ Executada como **AWS Glue Job (PySpark)**, com schema declarado explicitamente. 
 
 | Saída | Grão | Linhas |
 |---|---|---:|
-| `dim_territorio` | Município | 5.550 |
+| `dim_territorio` | Município | 5.570 |
 | `dim_rede` | Código de rede | 7 |
 | `fato_indicador_municipio` | Município × ano × rede | 23.995 |
 | `fato_indicador_uf` | UF × ano × rede | 145 |
 | `fato_aluno` | Aluno × ano | 3.867.999 |
+| `fato_escola` | Escola × ano (Censo Escolar) | 433.170 |
 | `fato_meta` | Ente × ano-alvo | 37.660 |
 | `meta_vs_resultado` | Município × ano, rede Municipal | 10.896 |
 | `quarentena` | Registros anômalos com motivo | 216 |
@@ -291,6 +300,9 @@ Colunas que quem consome a camada precisa conhecer:
 | `tem_distribuicao_nivel` | boolean | A distribuição por nível só existe em 2024 |
 | `aluno_valido` | boolean | Filtro obrigatório antes de agregar `fato_aluno` |
 | `faixa_proximidade` | string | Distância até o corte de 743, em faixas de 50 pontos |
+| `em_atividade` | boolean | Filtro obrigatório antes de agregar `fato_escola` — 17% das escolas do Censo estão paralisadas ou extintas |
+| `oferta_anos_iniciais` | boolean | Só escolas com anos iniciais são pertinentes ao indicador |
+| `tem_indicador` / `tem_censo` | boolean | Origem do município na dimensão: 20 constam só no Censo |
 | `safra` × `ano_meta` | int | Safra é o ano de publicação; `ano_meta` é o alvo |
 
 **Dois cuidados que produzem número errado sem gerar erro:**
@@ -303,9 +315,9 @@ A coluna `alfabetizado` marca como `0` os 512.153 alunos ausentes da avaliação
 
 ## 9. Qualidade de dados
 
-Oito regras executadas como **Glue Job em Spark SQL** sobre o Catalog, dentro do Workflow. Regra bloqueante reprovada faz o Job falhar e interrompe o fluxo — o portão entre Silver e Gold é comportamento da AWS, não disciplina de quem executa.
+Dez regras executadas como **Glue Job em Spark SQL** sobre o Catalog, dentro do Workflow. Regra bloqueante reprovada faz o Job falhar e interrompe o fluxo — o portão entre Silver e Gold é comportamento da AWS, não disciplina de quem executa.
 
-**Última execução: 8 de 8 aprovadas, 0 bloqueios.**
+**Última execução: 10 de 10 aprovadas, 0 bloqueios.**
 
 | # | Regra | Severidade | Resultado |
 |---|---|---|---|
@@ -317,6 +329,8 @@ Oito regras executadas como **Glue Job em Spark SQL** sobre o Catalog, dentro do
 | Q6 | Cobertura temporal e territorial | alerta | 5.550 municípios, 2 anos |
 | Q7 | Nulos estruturais na distribuição por nível | alerta | 0 fora do padrão |
 | Q8 | Conservação de volume entre camadas | bloqueante | bronze 23.995 = silver 23.995 |
+| Q9 | Unicidade da chave em `fato_escola` | bloqueante | 0 duplicatas |
+| Q10 | Coerência territorial do Censo Escolar | alerta | 0 divergências, 0 órfãos |
 
 **Q5 não é premissa da documentação, é fato medido.** A regra do ponto de corte foi verificada contra 3,3 milhões de registros individuais.
 
@@ -464,6 +478,7 @@ A tabela `fato_aluno` classifica cada estudante por `faixa_proximidade` em rela�
 ### Pré-requisitos
 
 - Python 3.11
+- **Terraform ≥ 1.5** — a infraestrutura AWS é declarada em `infra/terraform/`
 - Projeto no GCP com a API do BigQuery habilitada e credenciais de service account
 - Conta AWS com acesso ao bucket S3 do projeto
 
@@ -527,6 +542,33 @@ python src/teste_bigquery.py
 ```
 
 
+### Terraform
+
+Instale o binário, caso não tenha:
+
+```bash
+winget install HashiCorp.Terraform   # Windows
+brew install terraform               # macOS
+```
+
+Feche e reabra o terminal depois de instalar — o PATH só é lido na inicialização. Confirme com `terraform version`.
+
+A infraestrutura precisa saber qual role o Glue assume. Como o ARN varia por conta, ele fica em um arquivo local, fora do versionamento:
+
+```bash
+aws iam get-role --role-name LabRole --query 'Role.Arn' --output text
+```
+
+Crie `infra/terraform/terraform.tfvars` com o valor retornado:
+
+```hcl
+role_glue = "arn:aws:iam::SEU_ID_DE_CONTA:role/LabRole"
+```
+
+> ⚠️ O `terraform.tfvars` está no `.gitignore`, junto com `terraform.tfstate` e `.terraform/`. O *state* descreve a infraestrutura e o ID da conta, e não deve ser versionado.
+
+No AWS Academy não é possível criar roles IAM — a `LabRole` já vem provisionada. Em outra conta, a role precisa permitir `glue.amazonaws.com` na *trust policy* e ter acesso de leitura e escrita ao bucket.
+
 ### Execução
 
 **Bronze** — extrai do BigQuery, grava Parquet e envia ao S3:
@@ -535,7 +577,14 @@ python src/teste_bigquery.py
 python src/main.py
 ```
 
-**Infraestrutura** — cria os 19 recursos AWS:
+**Fonte externa** — recorte do Censo Escolar para a Bronze:
+
+```bash
+python src/estimativa_censo.py   # dry run: mede a varredura, sem custo
+python src/ingestao_censo.py     # extrai e envia ao S3
+```
+
+**Infraestrutura** — cria os recursos AWS:
 
 ```bash
 cd infra/terraform
@@ -591,7 +640,7 @@ make clean
 | Notebook de EDA com saídas executadas | [`notebooks/eda_bronze.ipynb`](notebooks/eda_bronze.ipynb) |
 | Print — `terraform apply`, 19 recursos criados | `assets/imagens/` ⏳ |
 | Print — grafo do Workflow, três etapas concluídas | `assets/imagens/` ⏳ |
-| Print — relatório de qualidade, 8 de 8 aprovadas | `assets/imagens/` ⏳ |
+| Print — relatório de qualidade, 10 de 10 aprovadas | `assets/imagens/` ⏳ |
 | Print — estrutura das camadas no bucket S3 | `assets/imagens/` ⏳ |
 | Print — log da execução do Workflow | `assets/imagens/` ⏳ |
 | Print — consulta no Athena sobre a Silver | `assets/imagens/` ⏳ |
@@ -696,7 +745,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 | Silver | Infraestrutura em Terraform | ✅ |
 | Silver | Glue Job de transformação | ✅ |
 | Silver | Schema explícito no Catalog | ✅ |
-| Silver | Validações Q1–Q8 | ✅ |
+| Silver | Validações Q1–Q10, incluindo a fonte externa | ✅ |
 | Silver | Orquestração por Glue Workflow | ✅ |
 | Gold | Datasets analíticos | ⏳ |
 | Operação | Logging e monitoramento | ✅ |
