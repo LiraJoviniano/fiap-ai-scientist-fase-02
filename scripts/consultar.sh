@@ -2,26 +2,37 @@
 #
 # Executa consultas analiticas sobre a camada Silver, no Athena.
 #
-# As consultas estão em sql/silver/ como arquivos versionados. 
+# As consultas vivem em sql/silver/ como arquivos versionados. Qualquer
+# pessoa que clone o repositorio e tenha acesso ao Catalog reproduz os
+# mesmos numeros — que e a diferenca entre um resultado apresentado e um
+# resultado verificavel.
 #
 # O resultado e salvo em sql/resultados/ como CSV, com carimbo de data.
 #
 # Uso:
-#   bash scripts/consultar.sh                        # lista as consultas
-#   bash scripts/consultar.sh distribuicao_por_faixa # executa uma
-#   bash scripts/consultar.sh --todas                # executa todas
+#   bash scripts/consultar.sh                          # lista as da Silver
+#   bash scripts/consultar.sh distribuicao_por_faixa   # executa uma
+#   bash scripts/consultar.sh --todas                  # executa todas
+#   CAMADA=gold bash scripts/consultar.sh              # lista as da Gold
+#   CAMADA=gold bash scripts/consultar.sh trajetoria_2030
 
 set -euo pipefail
 
 export MSYS_NO_PATHCONV=1
 
+# Sem isso o AWS CLI abre um paginador interativo e o script parece travar
+export AWS_PAGER=""
+
 PREFIXO="${PREFIXO:-alfabetizacao}"
 BUCKET="${BUCKET:-fiap-ai-scientist-fase-02}"
 REGIAO="${AWS_REGION:-us-east-1}"
 
-DATABASE="${PREFIXO}_silver"
+# A camada define o database e a pasta de consultas
+CAMADA="${CAMADA:-silver}"
 
-CONSULTAS_DIR="sql/silver"
+DATABASE="${PREFIXO}_${CAMADA}"
+
+CONSULTAS_DIR="sql/${CAMADA}"
 RESULTADOS_DIR="sql/resultados"
 
 ATHENA_SAIDA="s3://${BUCKET}/athena-results/"
@@ -36,7 +47,7 @@ separador() { printf '%.0s-' {1..70}; echo; }
 
 listar() {
   separador
-  info "Consultas disponiveis em ${CONSULTAS_DIR}:"
+  info "Consultas em ${CONSULTAS_DIR} (database ${DATABASE}):"
   echo
 
   for arquivo in "$CONSULTAS_DIR"/*.sql; do
@@ -52,6 +63,7 @@ listar() {
 
   echo
   info "Uso: bash scripts/consultar.sh <nome>"
+  info "Outra camada: CAMADA=gold bash scripts/consultar.sh"
   separador
 }
 
@@ -112,6 +124,9 @@ executar() {
     return 1
   fi
 
+  # O Athena grava o resultado como CSV no OutputLocation. Baixar em vez
+  # de reconstruir a tabela pelo get-query-results preserva o formato e
+  # deixa o resultado como artefato reaproveitavel.
   mkdir -p "$RESULTADOS_DIR"
 
   local destino="${RESULTADOS_DIR}/${nome}-$(date +%Y%m%d-%H%M).csv"

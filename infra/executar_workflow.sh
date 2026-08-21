@@ -2,7 +2,7 @@
 #
 # Dispara o Workflow da camada Silver e acompanha até o fim.
 #
-# O Workflow encadeia crawler, transformação e qualidade dentro da AWS.
+# O Workflow encadeia crawler, transformação, qualidade e Gold dentro da AWS.
 # O Terraform declara o fluxo; iniciar a execução é ação, e por isso fica
 # aqui.
 #
@@ -19,6 +19,9 @@
 set -euo pipefail
 
 export MSYS_NO_PATHCONV=1
+
+# Sem isso o AWS CLI abre um paginador interativo e o script parece travar
+export AWS_PAGER=""
 
 PREFIXO="${PREFIXO:-alfabetizacao}"
 BUCKET="${BUCKET:-fiap-ai-scientist-fase-02}"
@@ -129,6 +132,13 @@ verificar_saida() {
     --region "$REGIAO" | tail -18
 
   separador
+  info "Camada Gold no S3:"
+  echo
+
+  aws s3 ls "s3://${BUCKET}/gold/" --recursive --human-readable --summarize \
+    --region "$REGIAO" | tail -12
+
+  separador
   info "Relatorio de qualidade:"
   echo
 
@@ -158,7 +168,7 @@ verificar_saida() {
 main() {
   separador
   info "WORKFLOW — CAMADA SILVER"
-  info "crawler da Bronze -> job da Silver -> job de qualidade"
+  info "crawler -> Silver -> qualidade -> Gold"
   separador
 
   verificar_pre_requisitos
