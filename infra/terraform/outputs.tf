@@ -1,3 +1,6 @@
+// As saídas cumprem o mesmo papel da função verificar_resultado() do script
+// bash: confirmar o que foi criado, sem precisar consultar o console.
+
 output "databases" {
   description = "Databases criados no Glue Catalog."
   value = {
@@ -52,4 +55,14 @@ output "workflow" {
 output "comando_executar_workflow" {
   description = "O Terraform declara o fluxo; iniciar a execucao e acao."
   value       = "aws glue start-workflow-run --name ${aws_glue_workflow.silver.name}"
+}
+
+output "job_gold" {
+  description = "Glue Job da camada Gold."
+  value       = aws_glue_job.gold.name
+}
+
+output "tabelas_gold" {
+  description = "Tabelas da camada Gold declaradas no Catalog."
+  value       = sort([for t in aws_glue_catalog_table.gold : t.name])
 }

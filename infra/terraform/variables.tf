@@ -1,3 +1,7 @@
+// Variáveis equivalentes às do script bash, com os mesmos padrões.
+// Sobrescreva em terraform.tfvars ou pela linha de comando:
+//   terraform apply -var="prefixo=fiap"
+
 variable "prefixo" {
   description = "Prefixo dos databases. Evita colisão em conta compartilhada."
   type        = string
@@ -71,4 +75,10 @@ variable "caminho_script_qualidade" {
   description = "Caminho local do script Python Shell de qualidade, relativo a infra/terraform."
   type        = string
   default     = "../../src/transformation/qualidade_silver.py"
+}
+
+variable "caminho_script_gold" {
+  description = "Caminho local do script PySpark da camada Gold, relativo a infra/terraform."
+  type        = string
+  default     = "../../src/transformation/gold.py"
 }

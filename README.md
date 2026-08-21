@@ -32,15 +32,16 @@ Pipeline de dados híbrida (batch + streaming) em nuvem, construída sobre Arqui
 11. [Ingestão em streaming](#11-ingestão-em-streaming)
 12. [Observabilidade e monitoramento](#12-observabilidade-e-monitoramento)
 13. [Análise exploratória](#13-análise-exploratória)
-14. [FinOps — custo e otimização](#14-finops--custo-e-otimização)
-15. [Aplicação em IA e políticas públicas](#15-aplicação-em-ia-e-políticas-públicas)
-16. [Como executar](#16-como-executar)
-17. [Evidências de execução](#17-evidências-de-execução)
-18. [Estrutura do repositório](#18-estrutura-do-repositório)
-19. [Fluxo de trabalho Git](#19-fluxo-de-trabalho-git)
-20. [Roadmap e status](#20-roadmap-e-status)
-21. [Equipe](#21-equipe)
-22. [Licença](#22-licença)
+14. [Anomalia identificada no Rio Grande do Sul](#14-anomalia-identificada-no-rio-grande-do-sul)
+15. [FinOps — custo e otimização](#15-finops--custo-e-otimização)
+16. [Aplicação em IA e políticas públicas](#16-aplicação-em-ia-e-políticas-públicas)
+17. [Como executar](#17-como-executar)
+18. [Evidências de execução](#18-evidências-de-execução)
+19. [Estrutura do repositório](#19-estrutura-do-repositório)
+20. [Fluxo de trabalho Git](#20-fluxo-de-trabalho-git)
+21. [Roadmap e status](#21-roadmap-e-status)
+22. [Equipe](#22-equipe)
+23. [Licença](#23-licença)
 
 ---
 
@@ -64,7 +65,7 @@ Esta pipeline resolve esse gargalo. Transforma dados públicos brutos em uma cam
 | **Armazenamento** | Data lake em Amazon S3 em Arquitetura Medalhão, com dados em Parquet particionado |
 | **Tratamento** | Padronização de esquemas, normalização de chaves territoriais, tipagem correta e integração das entidades |
 | **Qualidade** | Validações automatizadas com relatório versionado a cada execução — registro reprovado vai para quarentena, não é descartado em silêncio |
-| **Camada Gold** | Datasets analíticos prontos: indicador por município, meta × resultado, série temporal e tabela de features para ML |
+| **Camada Gold** | Quatro datasets: série do indicador, evolução temporal, trajetória até 2030 e features para modelagem |
 | **Operação** | Logging estruturado, métricas de execução e alertas de falha |
 | **FinOps** | Arquitetura serverless, formato colunar particionado e estimativa de custo mensal documentada |
 
@@ -171,17 +172,17 @@ flowchart LR
 
 ## 5. Infraestrutura como código
 
-Toda a infraestrutura AWS é declarada em Terraform, em `infra/terraform/`. Um `terraform apply` cria **19 recursos** do zero.
+Toda a infraestrutura AWS é declarada em Terraform, em `infra/terraform/`. Um `terraform apply` cria **24 recursos** do zero.
 
 | Recurso | Qtde | Papel |
 |---|---:|---|
 | `aws_glue_catalog_database` | 3 | Um por camada do medalhão |
 | `aws_glue_crawler` | 1 | Cataloga a Bronze — 8 include paths explícitos |
-| `aws_glue_catalog_table` | 8 | Tabelas da Silver, com schema declarado |
-| `aws_glue_job` | 2 | Transformação e qualidade — Glue 4.0, 2× G.1X |
-| `aws_s3_object` | 2 | Upload dos scripts PySpark |
+| `aws_glue_catalog_table` | 12 | Tabelas da Silver e da Gold, com schema declarado |
+| `aws_glue_job` | 3 | Silver, qualidade e Gold — Glue 4.0, 2× G.1X |
+| `aws_s3_object` | 3 | Upload dos scripts PySpark |
 | `aws_glue_workflow` | 1 | Orquestração |
-| `aws_glue_trigger` | 3 | Encadeamento condicional |
+| `aws_glue_trigger` | 4 | Encadeamento condicional |
 
 **Crawler onde o dado é de terceiros, schema declarado onde o dado é nosso.** Na Bronze — inclusive na fonte externa do Censo Escolar — o schema vem de quem produziu o dado, e descobri-lo automaticamente é apropriado. Na Silver o schema é produto de decisão: `atingiu_meta` é boolean porque "sem meta" não é "não atingiu"; `id_municipio` é string porque código IBGE não é número. Deixar um Crawler inferir isso terceirizaria a decisão para um palpite sobre os dados de uma execução.
 
@@ -276,14 +277,28 @@ Executada como **AWS Glue Job (PySpark)**, com schema declarado explicitamente. 
 
 ### 🥇 Gold — pronta para consumo
 
-Datasets desnormalizados, agregados no grão de análise:
+Executada como **Glue Job (PySpark)**, disparada apenas se a qualidade da Silver for aprovada. A Gold agrega e não limpa: a padronização já aconteceu na camada anterior.
 
 | Dataset | Grão | Uso |
 |---|---|---|
-| `indicador_municipio` | Município × ano × rede | Indicador com flag de cobertura |
-| `meta_vs_resultado` | Município / UF / Brasil × ano | Distância até a meta |
-| `evolucao_temporal` | Município × ano | Série histórica em painel balanceado |
-| `features_ml` | Município × ano | Tabela de features para modelagem |
+| `indicador_municipio` | Município × ano × rede | Série do indicador, com meta e atingimento |
+| `evolucao_temporal` | Município × ano | Variação ano a ano e acumulada, em formato longo |
+| `trajetoria_meta_2030` | Município | Ritmo observado contra o necessário para 2030 |
+| `features_municipio` | Município | Dois alvos e doze variáveis, para modelagem |
+
+**O índice de trajetória** compara o ritmo observado entre 2023 e 2024 com o necessário para alcançar os 80% em 2030 — meta igual para todos os entes. Acima de 1, o município avança mais rápido do que precisa; abaixo, o ritmo atual não chega; negativo, está retrocedendo.
+
+| Classificação | Municípios | % |
+|---|---:|---:|
+| Retrocesso | 1.917 | 34,9 |
+| Em ritmo | 1.704 | 31,0 |
+| Meta atingida | 1.147 | 20,9 |
+| Ritmo insuficiente | 536 | 9,7 |
+| Sem meta | 196 | 3,6 |
+
+**A agregação do Censo pondera por matrícula, não conta escolas.** Uma escola de 800 alunos pesa quarenta vezes mais que uma de 20 — que é o comportamento correto quando a pergunta é quantos alunos têm acesso a biblioteca. O universo é restrito a escolas em atividade que ofertam anos iniciais na rede Municipal.
+
+**Duas ressalvas que acompanham qualquer leitura destes números:** dois pontos no tempo dão variação, não tendência; e o ritmo necessário pressupõe progresso linear, quando em educação os últimos pontos percentuais são os mais difíceis.
 
 ---
 
@@ -351,6 +366,7 @@ trigger ON_DEMAND
   └─ crawler da Bronze
       └─ (SUCCEEDED) job da Silver
           └─ (SUCCEEDED) job de qualidade
+              └─ (SUCCEEDED) job da Gold
 ```
 
 Cada etapa só dispara se a anterior teve sucesso. O job de qualidade levanta exceção quando uma regra bloqueante reprova, o que interrompe o fluxo.
@@ -410,7 +426,25 @@ Os achados que mais afetaram o desenho:
 
 ---
 
-## 14. FinOps — custo e otimização
+## 14. Anomalia identificada no Rio Grande do Sul
+
+A taxa média do RS caiu cerca de 20 pontos percentuais entre 2023 e 2024, muito além da variação de qualquer outra UF. Duas hipóteses metodológicas foram testadas e descartadas com dados:
+
+| Hipótese | Verificação | Resultado |
+|---|---|---|
+| Queda de participação na avaliação | `sql/gold/anomalia_rs_participacao.sql` | **Descartada** — participação subiu de 81,4% para 82,7% |
+| Mudança na composição da base | `sql/gold/anomalia_rs_composicao.sql` | **Insuficiente** — 25 municípios saíram, 6 pontos acima da média; efeito inferior a meio ponto |
+| Queda concentrada em poucos municípios | `sql/gold/anomalia_rs_municipios.sql` | **Descartada** — atinge 89,6% dos municípios |
+
+A distribuição inteira se deslocou: mediana de −19,8 e p75 de −10,5, contra mediana de +3,7 no resto do país. **Mesmo os 25% melhores do estado caíram mais de 10 pontos.**
+
+Uniformidade dessa ordem, em 443 municípios simultaneamente, é assinatura de alteração metodológica na origem do dado — aprendizado não muda em bloco num ano. Recomenda-se excluir o RS de comparações interestaduais até esclarecimento junto à fonte.
+
+**Consequência prática.** As consultas de trajetória e de retrocesso passaram a separar o estado. Sem isso, o Sul apareceria liderando o retrocesso nacional com 56% dos municípios em queda — conclusão falsa, produzida por um único estado. A consulta `trajetoria_2030_com_rs.sql` mantém a versão sem exclusão, para que a decisão seja auditável.
+
+---
+
+## 15. FinOps — custo e otimização
 
 | Decisão | Efeito |
 |---|---|
@@ -438,13 +472,26 @@ Os achados que mais afetaram o desenho:
 
 ---
 
-## 15. Aplicação em IA e políticas públicas
+## 16. Aplicação em IA e políticas públicas
 
 A camada Gold não é o fim da pipeline — é o insumo da próxima etapa. Foi desenhada desde o início pensando em consumo por modelos.
 
 ### O que os dados já mostram
 
 > **53,3% dos municípios atingiram a meta de 2024 na rede municipal** — 2.788 de 5.232 municípios com meta publicada.
+
+E olhando adiante, para a meta de 2030: **52% dos municípios já alcançaram os 80% ou avançam no ritmo necessário.** Mas 1.917 retrocederam entre 2023 e 2024 — mais que o triplo dos 536 que avançam devagar demais. O problema principal não é lentidão, é reversão, e política pública para município que piora é diferente de política para município que avança devagar.
+
+A camada Gold também revelou associação entre infraestrutura e resultado. Agrupando municípios por quartil do índice de infraestrutura escolar:
+
+| Quartil | Índice médio | Taxa média | Alunos por docente |
+|---|---:|---:|---:|
+| 1 | 58,2 | 57,3% | 18,0 |
+| 2 | 73,2 | 60,9% | 17,5 |
+| 3 | 83,4 | 66,0% | 15,8 |
+| 4 | 96,3 | 67,0% | 14,9 |
+
+Quase 10 pontos percentuais entre o primeiro e o último quartil, subindo em todos os degraus, com a razão aluno-docente caindo junto. É associação descritiva, não causalidade — mas justifica ambas as dimensões como variáveis na modelagem.
 
 Quase metade da rede municipal ficou abaixo do alvo pactuado, e a pipeline identifica exatamente quais municípios.
 
@@ -473,7 +520,7 @@ A tabela `fato_aluno` classifica cada estudante por `faixa_proximidade` em rela�
 
 ---
 
-## 16. Como executar
+## 17. Como executar
 
 ### Pré-requisitos
 
@@ -609,8 +656,10 @@ bash infra/executar_job_silver.sh
 **Consultas analíticas** sobre a Silver, no Athena:
 
 ```bash
-bash scripts/consultar.sh                        # lista as disponíveis
+bash scripts/consultar.sh                        # lista as da Silver
 bash scripts/consultar.sh distribuicao_por_faixa # executa uma
+CAMADA=gold bash scripts/consultar.sh            # lista as da Gold
+CAMADA=gold bash scripts/consultar.sh trajetoria_2030
 ```
 
 As consultas ficam versionadas em `sql/silver/`, com comentários explicando as restrições que a camada impõe. Quem clonar o repositório e tiver acesso ao Catalog reproduz os mesmos números.
@@ -633,7 +682,7 @@ make clean
 
 ---
 
-## 17. Evidências de execução
+## 18. Evidências de execução
 
 | Evidência | Local |
 |---|---|
@@ -649,7 +698,7 @@ make clean
 
 ---
 
-## 18. Estrutura do repositório
+## 19. Estrutura do repositório
 
 ```
 .
@@ -678,7 +727,7 @@ make clean
 
 ---
 
-## 19. Fluxo de trabalho Git
+## 20. Fluxo de trabalho Git
 
 O histórico do repositório é parte da entrega. Nada é commitado direto na `main`.
 
@@ -693,7 +742,7 @@ O histórico do repositório é parte da entrega. Nada é commitado direto na `m
 | 5 | `feature/camada-bronze` | Implementação da camada Bronze | `feat` | 🚧 |
 | 6 | `feature/upload-s3` | Upload da Bronze para o Amazon S3 | `feat` | ✅ |
 | 7 | `feature/camada-silver` | Implementação da camada Silver | `feat` | ✅ |
-| 8 | `feature/camada-gold` | Implementação da camada Gold | `feat` | ⏳ |
+| 8 | `feature/camada-gold` | Implementação da camada Gold | `feat` | ✅ |
 | 9 | `feature/qualidade-dados` | Validações de qualidade | `feat` | ✅ |
 | 10 | `feature/logging-monitoramento` | Logging e monitoramento | `feat` | ⏳ |
 | 11 | `feature/streaming` | Ingestão em streaming | `feat` | ⏳ |
@@ -729,7 +778,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 ---
 
-## 20. Roadmap e status
+## 21. Roadmap e status
 
 | Etapa | Entregável | Status |
 |---|---|---|
@@ -747,7 +796,10 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 | Silver | Schema explícito no Catalog | ✅ |
 | Silver | Validações Q1–Q10, incluindo a fonte externa | ✅ |
 | Silver | Orquestração por Glue Workflow | ✅ |
-| Gold | Datasets analíticos | ⏳ |
+| Gold | Indicadores e datasets analíticos | ✅ |
+| Gold | Fonte externa integrada (Censo Escolar) | ✅ |
+| Gold | IA e modelagem | ⏳ |
+| Gold | Dashboards | ⏳ |
 | Operação | Logging e monitoramento | ✅ |
 | Operação | FinOps e estimativa de custo | ⏳ |
 | Consumo | Dashboard analítico | ⏳ |
@@ -757,7 +809,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 ---
 
-## 21. Equipe
+## 22. Equipe
 
 | Nome        | Responsabilidade principal | GitHub |
 |-------------|----------------------------|--------|
@@ -771,7 +823,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 ---
 
-## 22. Licença
+## 23. Licença
 
 Distribuído sob a licença MIT. Veja [LICENSE](LICENSE).
 
