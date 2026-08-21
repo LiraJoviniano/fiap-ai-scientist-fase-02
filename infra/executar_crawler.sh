@@ -26,7 +26,7 @@ REGIAO="${AWS_REGION:-us-east-1}"
 DATABASE="${PREFIXO}_bronze"
 CRAWLER="${PREFIXO}_crawler_bronze"
 
-TABELAS_ESPERADAS=7
+TABELAS_ESPERADAS=8
 TABELAS_COM_MUNICIPIO=("municipios" "alunos" "metas_municipios")
 
 INTERVALO=10

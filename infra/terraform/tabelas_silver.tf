@@ -2,10 +2,16 @@
 // Tabelas da camada Silver — schema explícito
 //
 // Diferente da Bronze, a Silver não usa Crawler. O schema desta camada é
-// explícito: `atingiu_meta` é boolean porque "sem meta" não
+// decisão, não descoberta: `atingiu_meta` é boolean porque "sem meta" não
 // é "não atingiu"; `id_municipio` é string porque código IBGE não é número.
 // Deixar um Crawler inferir isso terceirizaria a decisão para um palpite
 // sobre os dados de uma execução específica.
+//
+// Declarar em Terraform, e não por DDL no Athena, tem uma vantagem
+// concreta: se o schema do Job mudar, o `terraform plan` acusa a
+// divergência e corrige. Um `CREATE TABLE IF NOT EXISTS` veria que a
+// tabela existe e não faria nada, deixando o Catalog descrevendo uma coisa
+// enquanto o Parquet contém outra.
 //
 // As definições abaixo espelham ESQUEMA_SILVER em
 // src/transformation/silver.py. Se uma mudar, a outra precisa mudar junto.
@@ -55,9 +61,14 @@ locals {
         { name = "codigo_uf", type = "string" },
         { name = "sigla_uf", type = "string" },
         { name = "regiao", type = "string" },
-        // O nome do município não existe neste dataset. A coluna é
+        // O nome do município não existe em nenhuma das fontes. A coluna é
         // declarada em vez de omitida, para que a lacuna fique explícita.
         { name = "nome_municipio", type = "string" },
+        // A dimensão cobre o universo das duas fontes: o Censo alcança
+        // municípios ausentes da avaliação. As flags tornam a diferença
+        // de cobertura mensurável em vez de silenciosa.
+        { name = "tem_indicador", type = "boolean" },
+        { name = "tem_censo", type = "boolean" },
       ]
     }
 
@@ -127,6 +138,44 @@ locals {
         // maior retorno marginal de intervencao pedagogica.
         { name = "faixa_proximidade", type = "string" },
         { name = "peso_aluno", type = "double" },
+      ]
+    }
+
+    // Grao da escola, a partir do Censo Escolar. A Silver limpa e
+    // padroniza; a agregacao para municipio, ponderada por matricula,
+    // fica na Gold.
+    fato_escola = {
+      location = "fatos/fato_escola"
+      columns = [
+        { name = "ano", type = "int" },
+        { name = "id_escola", type = "string" },
+        { name = "id_municipio", type = "string" },
+        { name = "codigo_uf", type = "string" },
+        // sigla_uf vem da origem; a derivada permite conferir divergencia
+        { name = "sigla_uf", type = "string" },
+        { name = "sigla_uf_derivada", type = "string" },
+        { name = "regiao", type = "string" },
+        { name = "rede_codigo", type = "string" },
+        { name = "rede_nome", type = "string" },
+        { name = "tipo_localizacao", type = "string" },
+        // O Censo mantem escolas paralisadas e extintas: a Gold deve
+        // agregar apenas as em atividade.
+        { name = "situacao_funcionamento", type = "string" },
+        { name = "em_atividade", type = "boolean" },
+        { name = "oferta_anos_iniciais", type = "boolean" },
+        { name = "matriculas_anos_iniciais", type = "int" },
+        { name = "matriculas_integral", type = "int" },
+        { name = "docentes_anos_iniciais", type = "int" },
+        { name = "turmas_anos_iniciais", type = "int" },
+        { name = "matriculas_zona_rural", type = "int" },
+        { name = "matriculas_transporte", type = "int" },
+        { name = "tem_biblioteca", type = "boolean" },
+        { name = "tem_laboratorio_informatica", type = "boolean" },
+        { name = "tem_banda_larga", type = "boolean" },
+        { name = "tem_agua_adequada", type = "boolean" },
+        { name = "tem_energia_publica", type = "boolean" },
+        { name = "tem_esgoto_adequado", type = "boolean" },
+        { name = "tem_alimentacao", type = "boolean" },
       ]
     }
 

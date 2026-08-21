@@ -93,6 +93,7 @@ TABELAS_BRONZE = {
     "indicador_uf": "alfabetizacao",
     "indicador_municipio": "municipios",
     "aluno": "alunos",
+    "escola": "censo_escolar",
     "meta_municipio": "metas_municipios",
     "meta_uf": "metas_uf",
     "meta_brasil": "metas_brasil",
@@ -110,6 +111,45 @@ PROVA_PREENCHIDA = "1"
 MARGEM_PROXIMIDADE = 50
 
 # ---------------------------------------------------------------------------
+# Censo Escolar — fonte externa
+# ---------------------------------------------------------------------------
+
+# Renomeia as colunas da origem para os nomes da Silver. Mantém o padrão
+# das demais tabelas: nome descreve o conteúdo, não a codificação.
+RENOMEAR_ESCOLA = {
+    "quantidade_matricula_fundamental_anos_iniciais": "matriculas_anos_iniciais",
+    "quantidade_matricula_fundamental_anos_iniciais_integral": "matriculas_integral",
+    "quantidade_docente_fundamental_anos_iniciais": "docentes_anos_iniciais",
+    "quantidade_turma_fundamental_anos_iniciais": "turmas_anos_iniciais",
+    "quantidade_matricula_zona_residencia_rural": "matriculas_zona_rural",
+    "quantidade_matricula_utiliza_transporte_publico": "matriculas_transporte",
+}
+
+# Flags de infraestrutura, agrupadas por tema. Várias colunas da origem
+# descrevem alternativas do mesmo recurso — o que interessa é se há
+# atendimento adequado, não qual a modalidade.
+INFRAESTRUTURA_ESCOLA = {
+    "tem_biblioteca": ["biblioteca", "biblioteca_sala_leitura"],
+    "tem_laboratorio_informatica": ["laboratorio_informatica"],
+    "tem_banda_larga": ["banda_larga"],
+    "tem_agua_adequada": ["agua_rede_publica", "agua_potavel"],
+    "tem_energia_publica": ["energia_rede_publica"],
+    "tem_esgoto_adequado": ["esgoto_rede_publica", "esgoto_fossa_septica"],
+    "tem_alimentacao": ["alimentacao"],
+}
+
+COLUNA_OFERTA_ANOS_INICIAIS = "etapa_ensino_fundamental_anos_iniciais"
+
+# O Censo mantém registro de escolas paralisadas e extintas. A Silver
+# marca a situação e não filtra — o recorte é decisão da Gold, que só deve
+# agregar escolas em atividade.
+COLUNA_SITUACAO = "tipo_situacao_funcionamento"
+
+# Código da fonte para escola em atividade. Confirmar no dicionário do
+# Censo antes de tratar a marcação como definitiva.
+SITUACAO_EM_ATIVIDADE = "1"
+
+# ---------------------------------------------------------------------------
 # Schema explícito das saídas
 #
 # O schema desta camada é decisão, não inferência. Identificadores são
@@ -123,6 +163,9 @@ ESQUEMA_SILVER = {
         ("sigla_uf", "string"),
         ("regiao", "string"),
         ("nome_municipio", "string"),
+        # Tornam a diferença de cobertura entre as fontes mensurável
+        ("tem_indicador", "boolean"),
+        ("tem_censo", "boolean"),
     ],
     "dim_rede": [
         ("rede_codigo", "string"),
@@ -173,6 +216,34 @@ ESQUEMA_SILVER = {
         ("distancia_corte", "double"),
         ("faixa_proximidade", "string"),
         ("peso_aluno", "double"),
+    ],
+    "fato_escola": [
+        ("ano", "int"),
+        ("id_escola", "string"),
+        ("id_municipio", "string"),
+        ("codigo_uf", "string"),
+        ("sigla_uf", "string"),
+        ("sigla_uf_derivada", "string"),
+        ("regiao", "string"),
+        ("rede_codigo", "string"),
+        ("rede_nome", "string"),
+        ("tipo_localizacao", "string"),
+        ("situacao_funcionamento", "string"),
+        ("em_atividade", "boolean"),
+        ("oferta_anos_iniciais", "boolean"),
+        ("matriculas_anos_iniciais", "int"),
+        ("matriculas_integral", "int"),
+        ("docentes_anos_iniciais", "int"),
+        ("turmas_anos_iniciais", "int"),
+        ("matriculas_zona_rural", "int"),
+        ("matriculas_transporte", "int"),
+        ("tem_biblioteca", "boolean"),
+        ("tem_laboratorio_informatica", "boolean"),
+        ("tem_banda_larga", "boolean"),
+        ("tem_agua_adequada", "boolean"),
+        ("tem_energia_publica", "boolean"),
+        ("tem_esgoto_adequado", "boolean"),
+        ("tem_alimentacao", "boolean"),
     ],
     "fato_meta": [
         ("nivel_territorial", "string"),
@@ -476,17 +547,111 @@ def construir_fato_aluno(df: DataFrame) -> DataFrame:
     return resultado.withColumn("faixa_proximidade", faixa)
 
 
-def construir_dim_territorio(indicador: DataFrame) -> DataFrame:
+def _flag(coluna: str):
     """
-    Dimensão territorial derivada do código IBGE.
+    Converte uma flag da origem em booleano.
 
-    `nome_municipio` fica vazia: não existe neste dataset. Declarada em vez
-    de omitida para que a lacuna seja explícita.
+    As colunas do Censo chegam como 1/0 e o tipo varia entre edições; a
+    comparação por texto atravessa inteiro, string e booleano.
     """
+
+    return F.col(coluna).cast("string").isin("1", "true", "True")
+
+
+def construir_fato_escola(df: DataFrame) -> DataFrame:
+    """
+    Fato no grão da escola, a partir do Censo Escolar.
+
+    Não agrega: a Silver limpa e padroniza, a Gold agrega ponderando por
+    matrícula. Também não filtra — marca com `oferta_anos_iniciais` e
+    `em_atividade`, e o recorte é escolha da Gold.
+    """
+
+    resultado = traduzir_rede(df)
+
+    # A origem traz sigla_uf própria. Derivar em paralelo permite comparar
+    # as duas e detectar divergência de código territorial.
+    resultado = (
+        resultado.withColumnRenamed("sigla_uf", "sigla_uf_origem")
+        .withColumn("codigo_uf", F.substring(F.col("id_municipio"), 1, 2))
+        .withColumn(
+            "sigla_uf_derivada", _mapa(CODIGO_UF_PARA_SIGLA)[F.col("codigo_uf")]
+        )
+        .withColumnRenamed("sigla_uf_origem", "sigla_uf")
+        .withColumn("regiao", _mapa(REGIAO_POR_SIGLA)[F.col("sigla_uf")])
+    )
+
+    for origem, destino in RENOMEAR_ESCOLA.items():
+        if origem in resultado.columns:
+            resultado = resultado.withColumnRenamed(origem, destino)
+
+    resultado = (
+        resultado.withColumn(
+            "oferta_anos_iniciais", _flag(COLUNA_OFERTA_ANOS_INICIAIS)
+        )
+        .withColumnRenamed(COLUNA_SITUACAO, "situacao_funcionamento")
+    )
+
+    resultado = resultado.withColumn(
+        "em_atividade",
+        F.col("situacao_funcionamento").cast("string") == SITUACAO_EM_ATIVIDADE,
+    )
+
+    for destino, origens in INFRAESTRUTURA_ESCOLA.items():
+        presentes = [c for c in origens if c in resultado.columns]
+
+        if not presentes:
+            resultado = resultado.withColumn(destino, F.lit(None).cast("boolean"))
+            continue
+
+        condicao = _flag(presentes[0])
+
+        for coluna in presentes[1:]:
+            condicao = condicao | _flag(coluna)
+
+        resultado = resultado.withColumn(destino, condicao)
+
+    return resultado
+
+
+def construir_dim_territorio(
+    indicador: DataFrame, escola: DataFrame
+) -> DataFrame:
+    """
+    Dimensão territorial, a partir da união das fontes.
+
+    Dimensão deve cobrir o universo; incompletude pertence aos fatos. O
+    Censo Escolar alcança municípios que não aparecem na avaliação de
+    alfabetização — construir a dimensão só a partir do indicador deixaria
+    esses municípios órfãos no join.
+
+    `nome_municipio` fica vazia: não existe em nenhuma das duas fontes.
+    Declarada em vez de omitida para que a lacuna seja explícita.
+    """
+
+    do_indicador = indicador.select("id_municipio").distinct()
+    do_censo = escola.select("id_municipio").distinct()
+
+    universo = do_indicador.unionByName(do_censo).distinct()
+
+    # Marca a origem para tornar a diferença de cobertura mensurável em
+    # vez de silenciosa
+    universo = (
+        universo.join(
+            do_indicador.withColumn("tem_indicador", F.lit(True)),
+            "id_municipio",
+            "left",
+        )
+        .join(
+            do_censo.withColumn("tem_censo", F.lit(True)),
+            "id_municipio",
+            "left",
+        )
+        .fillna({"tem_indicador": False, "tem_censo": False})
+    )
 
     return (
-        indicador.select("id_municipio", "codigo_uf", "sigla_uf", "regiao")
-        .distinct()
+        universo.transform(derivar_territorio)
         .withColumn("nome_municipio", F.lit(None).cast("string"))
         .orderBy("id_municipio")
     )
@@ -548,13 +713,16 @@ def construir_silver(bronze: dict[str, DataFrame], spark: SparkSession) -> dict:
     )
 
     fato_aluno = construir_fato_aluno(bronze["aluno"])
+    fato_escola = construir_fato_escola(bronze["escola"])
 
     integrado = integrar_meta_resultado(fato_municipio, fato_meta)
 
     return {
         "fato_aluno": aplicar_esquema(fato_aluno, "fato_aluno"),
+        "fato_escola": aplicar_esquema(fato_escola, "fato_escola"),
         "dim_territorio": aplicar_esquema(
-            construir_dim_territorio(fato_municipio), "dim_territorio"
+            construir_dim_territorio(fato_municipio, fato_escola),
+            "dim_territorio",
         ),
         "dim_rede": aplicar_esquema(construir_dim_rede(spark), "dim_rede"),
         "fato_indicador_municipio": aplicar_esquema(
@@ -572,6 +740,7 @@ DESTINOS = {
     "fato_indicador_municipio": "fatos/fato_indicador_municipio",
     "fato_indicador_uf": "fatos/fato_indicador_uf",
     "fato_aluno": "fatos/fato_aluno",
+    "fato_escola": "fatos/fato_escola",
     "fato_meta": "fatos/fato_meta",
     "meta_vs_resultado": "integracao/meta_vs_resultado",
 }
