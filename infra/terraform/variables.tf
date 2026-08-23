@@ -82,3 +82,22 @@ variable "caminho_script_gold" {
   type        = string
   default     = "../../src/transformation/gold.py"
 }
+
+variable "kinesis_stream_name" {
+  description = "Nome do Kinesis Data Stream do streaming."
+  type        = string
+  default     = "alfabetizacao-events-dev"
+}
+
+variable "lambda_streaming_name" {
+  description = "Nome da Lambda consumidora do streaming."
+  type        = string
+  default     = "alfabetizacao-streaming-lambda"
+}
+
+
+variable "caminho_lambda_zip" {
+  description = "Pacote ZIP da Lambda de streaming."
+  type        = string
+  default     = "../../lambda_function.zip"
+}

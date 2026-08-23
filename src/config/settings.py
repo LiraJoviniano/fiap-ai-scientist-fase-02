@@ -17,6 +17,11 @@ class Settings:
     AWS_REGION: str = os.getenv("AWS_REGION", "")
     AWS_BUCKET: str = os.getenv("AWS_BUCKET", "")
 
+    KINESIS_STREAM_NAME: str = os.getenv(
+        "KINESIS_STREAM_NAME",
+        "alfabetizacao-events-dev"
+    )
+
     PIPELINE_ENV: str = os.getenv("PIPELINE_ENV", "dev")
 
 
