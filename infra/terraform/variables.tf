@@ -82,3 +82,34 @@ variable "caminho_script_gold" {
   type        = string
   default     = "../../src/transformation/gold.py"
 }
+
+variable "kinesis_stream_name" {
+  description = "Nome do Kinesis Data Stream do streaming."
+  type        = string
+  default     = "alfabetizacao-events-dev"
+}
+
+variable "lambda_streaming_name" {
+  description = "Nome da Lambda consumidora do streaming."
+  type        = string
+  default     = "alfabetizacao-streaming-lambda"
+}
+
+
+variable "caminho_lambda_zip" {
+  description = "Pacote ZIP da Lambda de streaming."
+  type        = string
+  default     = "../../lambda_function.zip"
+}
+
+variable "caminho_script_streaming_silver" {
+  description = "Caminho local do script PySpark da Silver de streaming."
+  type        = string
+  default     = "../../src/transformation/streaming_silver.py"
+}
+
+variable "caminho_script_streaming_gold" {
+  description = "Caminho local do script PySpark da Gold de streaming."
+  type        = string
+  default     = "../../src/transformation/streaming_gold.py"
+}

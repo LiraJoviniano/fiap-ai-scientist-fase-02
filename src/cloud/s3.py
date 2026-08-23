@@ -1,6 +1,8 @@
 from pathlib import Path
+
 import boto3
-from config.settings import settings
+
+from src.config.settings import settings
 
 
 client = boto3.client(
@@ -13,16 +15,25 @@ def upload_file(file_path: Path):
 
     s3_key = str(file_path).replace("\\", "/")
 
-    # Remove somente o prefixo data/
     if s3_key.startswith("data/"):
         s3_key = s3_key.removeprefix("data/")
-        # Se estiver em Python < 3.9 use:
-        # s3_key = s3_key[len("data/"):]
 
     client.upload_file(
         Filename=str(file_path),
         Bucket=settings.AWS_BUCKET,
         Key=s3_key
+    )
+
+    print(f"Upload realizado: s3://{settings.AWS_BUCKET}/{s3_key}")
+
+
+def upload_text(content: str, s3_key: str):
+
+    client.put_object(
+        Bucket=settings.AWS_BUCKET,
+        Key=s3_key,
+        Body=content.encode("utf-8"),
+        ContentType="application/json"
     )
 
     print(f"Upload realizado: s3://{settings.AWS_BUCKET}/{s3_key}")

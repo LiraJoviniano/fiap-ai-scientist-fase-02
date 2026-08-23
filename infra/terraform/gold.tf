@@ -241,6 +241,9 @@ resource "aws_glue_trigger" "qualidade_para_gold" {
   actions {
     job_name = aws_glue_job.gold.name
   }
+  lifecycle {
+    ignore_changes = [enabled]
+  }
 
   tags = local.tags_comuns
 }

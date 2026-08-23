@@ -66,3 +66,28 @@ output "tabelas_gold" {
   description = "Tabelas da camada Gold declaradas no Catalog."
   value       = sort([for t in aws_glue_catalog_table.gold : t.name])
 }
+
+output "kinesis_stream" {
+  description = "Kinesis Data Stream do streaming."
+  value       = aws_kinesis_stream.streaming.name
+}
+
+output "lambda_streaming" {
+  description = "Lambda consumidora do streaming."
+  value       = aws_lambda_function.streaming.function_name
+}
+
+output "event_source_mapping" {
+  description = "UUID do vínculo Kinesis → Lambda."
+  value       = aws_lambda_event_source_mapping.streaming.uuid
+}
+
+output "job_streaming_silver" {
+  description = "Glue Job da Silver de streaming."
+  value       = aws_glue_job.streaming_silver.name
+}
+
+output "job_streaming_gold" {
+  description = "Glue Job da Gold de streaming."
+  value       = aws_glue_job.streaming_gold.name
+}

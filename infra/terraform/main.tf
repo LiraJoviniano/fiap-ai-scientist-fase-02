@@ -45,6 +45,7 @@ provider "aws" {
   // AWS Academy. Nenhuma credencial é declarada aqui.
 }
 
+
 // ---------------------------------------------------------------------------
 // Databases — um por camada da arquitetura medalhão
 // ---------------------------------------------------------------------------
@@ -203,4 +204,52 @@ resource "aws_glue_job" "silver" {
   tags = merge(local.tags_comuns, { Layer = "silver" })
 
   depends_on = [aws_glue_crawler.bronze]
+}
+
+// ---------------------------------------------------------------------------
+// Streaming — Kinesis + Lambda
+// ---------------------------------------------------------------------------
+
+resource "aws_kinesis_stream" "streaming" {
+  name             = var.kinesis_stream_name
+  shard_count      = 1
+  retention_period = 24
+
+  tags = merge(local.tags_comuns, {
+    Layer     = "bronze"
+    Component = "streaming"
+  })
+}
+
+resource "aws_lambda_function" "streaming" {
+  function_name = var.lambda_streaming_name
+  role          = var.role_glue
+  handler       = "lambda_handler.lambda_handler"
+  runtime       = "python3.11"
+
+  filename         = var.caminho_lambda_zip
+  source_code_hash = filebase64sha256(var.caminho_lambda_zip)
+
+  memory_size = 512
+  timeout     = 10
+
+  environment {
+    variables = {
+      AWS_BUCKET       = var.bucket
+      STREAMING_PREFIX = "bronze/streaming/"
+    }
+  }
+
+  tags = merge(local.tags_comuns, {
+    Layer     = "bronze"
+    Component = "streaming"
+  })
+}
+
+resource "aws_lambda_event_source_mapping" "streaming" {
+  event_source_arn  = aws_kinesis_stream.streaming.arn
+  function_name     = aws_lambda_function.streaming.arn
+  starting_position = "LATEST"
+  batch_size        = 10
+  enabled           = true
 }
