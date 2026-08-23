@@ -123,6 +123,9 @@ flowchart LR
         BRONZE["🥉 Bronze<br/>Parquet"]
         SILVER["🥈 Silver<br/>limpo, padronizado<br/>e integrado"]
         GOLD["🥇 Gold<br/>datasets analíticos"]
+        BRONZE_STREAM["🥉 Bronze Streaming<br/>Parquet"]
+        SILVER_STREAM["🥈 Silver Streaming<br/>eventos padronizados"]
+        GOLD_STREAM["🥇 Gold Streaming<br/>estado atual"]
     end
 
     subgraph CONSUMO["Consumo"]
@@ -139,13 +142,16 @@ flowchart LR
     PROD --> KIN
     KIN --> LAMBDA
     BATCH --> BRONZE
-    LAMBDA --> BRONZE
+    LAMBDA --> BRONZE_STREAM
     BRONZE --> QA --> SILVER
     SILVER --> QA
     SILVER --> GOLD
+    BRONZE_STREAM --> SILVER_STREAM
+    SILVER_STREAM --> GOLD_STREAM
     GOLD --> DASH
     GOLD --> ML
     GOLD --> SQL
+    GOLD_STREAM --> SQL
     OBS -.observa.-> KIN
     OBS -.observa.-> LAMBDA
     OBS -.observa.-> LAKE
@@ -178,15 +184,15 @@ flowchart LR
 
 ## 5. Infraestrutura como código
 
-Toda a infraestrutura AWS é declarada em Terraform, em `infra/terraform/`. Um `terraform apply` cria **24 recursos** do zero.
+Toda a infraestrutura AWS é declarada em Terraform, em `infra/terraform/`. Um `terraform apply` cria **28 recursos** do zero.
 
 | Recurso | Qtde | Papel |
 |---|---:|---|
 | `aws_glue_catalog_database` | 3 | Um por camada do medalhão |
 | `aws_glue_crawler` | 1 | Cataloga a Bronze — 8 include paths explícitos |
 | `aws_glue_catalog_table` | 12 | Tabelas da Silver e da Gold, com schema declarado |
-| `aws_glue_job` | 3 | Silver, qualidade e Gold — Glue 4.0, 2× G.1X |
-| `aws_s3_object` | 3 | Upload dos scripts PySpark |
+| `aws_glue_job` | 5 | Silver, qualidade, Gold e Streaming Silver/Gold — Glue 4.0, 2× G.1X |
+| `aws_s3_object` | 5 | Upload dos scripts PySpark |
 | `aws_glue_workflow` | 1 | Orquestração |
 | `aws_glue_trigger` | 4 | Encadeamento condicional |
 | `aws_kinesis_stream` | 1 | Recebe os eventos de streaming |
@@ -403,7 +409,11 @@ AWS Lambda
    ↓
 PyArrow
    ↓
-S3 Bronze
+S3 Bronze Streaming
+   ↓
+Streaming Silver
+   ↓
+Streaming Gold
 ```
 
 O `Producer`, em `src/ingestion/streaming/producer.py`, gera eventos simulados no contrato definido em `StreamingEvent`. Cada evento contém `event_id`, `event_type`, `event_timestamp`, `municipio_id`, `indicador` e `valor`.
@@ -416,7 +426,7 @@ A Lambda:
 2. normaliza os campos do evento;
 3. agrupa os eventos do lote recebido;
 4. converte os registros para Parquet usando PyArrow;
-5. grava o resultado na camada Bronze do S3.
+5. grava o resultado na camada Bronze Streaming do S3.
 
 Os arquivos são particionados por data:
 
@@ -430,9 +440,70 @@ bronze/streaming/
 
 A persistência ocorre diretamente em Parquet, mantendo a convenção adotada pelo restante do Data Lake.
 
+### Streaming Silver
+
+A camada Silver Streaming é processada por um Glue Job independente do pipeline batch existente.
+
+O Job:
+
+1. lê os arquivos Parquet da Bronze Streaming;
+2. aplica tipagem explícita aos campos;
+3. converte `event_timestamp` para `timestamp`;
+4. deriva `data_evento`;
+5. elimina registros inválidos;
+6. remove duplicidades por `event_id`;
+7. grava o resultado em Parquet.
+
+Destino:
+
+```text
+silver/streaming/eventos/
+```
+
+Schema principal:
+
+| Campo | Tipo |
+|---|---|
+| `event_id` | string |
+| `event_type` | string |
+| `event_timestamp` | timestamp |
+| `data_evento` | date |
+| `municipio_id` | string |
+| `indicador` | string |
+| `valor` | double |
+
+### Streaming Gold
+
+A camada Gold Streaming mantém o estado mais recente de cada combinação `municipio_id + indicador`.
+
+Para isso, os eventos são ordenados por `event_timestamp` decrescente e o registro mais recente é mantido.
+
+Destino:
+
+```text
+gold/streaming/ultimo_indicador_municipio/
+```
+
+Na POC, foram utilizados os seguintes eventos:
+
+```text
+3550308 → 0,83
+3550308 → 0,84
+3304557 → 0,79
+```
+
+A Gold mantém somente o estado atual:
+
+```text
+3550308 → 0,84
+3304557 → 0,79
+```
+
+Assim, o evento mais recente representa o estado atual do indicador para cada município e indicador, enquanto o histórico permanece disponível nas camadas anteriores.
+
 ### Validação realizada
 
-A POC foi validada ponta a ponta com eventos simulados:
+A implementação foi validada ponta a ponta:
 
 ```text
 3 eventos publicados
@@ -441,40 +512,86 @@ Kinesis
         ↓
 Lambda acionada
         ↓
-1 lote com 3 eventos
+1 arquivo Parquet na Bronze
         ↓
-1 arquivo Parquet gerado
+Streaming Silver — SUCCEEDED
         ↓
-3 eventos recuperados do S3
+1 arquivo Parquet na Silver
+        ↓
+Streaming Gold — SUCCEEDED
+        ↓
+1 arquivo Parquet na Gold
+        ↓
+2 estados atuais de município + indicador
 ```
 
-O arquivo gerado foi baixado do S3 e lido novamente com Pandas, confirmando os três eventos e o schema esperado. Após a implantação pelo Terraform, o mesmo fluxo foi executado novamente com sucesso.
+A Silver foi validada com os três eventos, confirmando `event_timestamp`, `data_evento`, `municipio_id`, `indicador` e `valor`.
+
+A Gold confirmou a regra de estado atual: para o município `3550308`, o valor `0,84` prevaleceu sobre o evento anterior `0,83`.
+
+Os arquivos Parquet foram baixados do S3 e validados localmente com Pandas.
 
 ### Infraestrutura
 
-Kinesis, Lambda e Event Source Mapping são declarados em `infra/terraform/` e estão sob gerenciamento do Terraform. Os recursos já existentes foram importados para o state sem destruição da infraestrutura anterior.
+Kinesis, Lambda, Event Source Mapping, Streaming Silver e Streaming Gold são declarados e gerenciados com Terraform.
+
+A implementação do streaming **não altera o pipeline batch existente**. O fluxo original Bronze → Silver → Qualidade → Gold permanece independente.
 
 ### Execução
+
+**Producer:**
 
 ```bash
 python -m src.ingestion.streaming.producer
 ```
 
-Validação no S3:
+**Streaming Silver:**
 
 ```bash
-aws s3 ls \
-  s3://<bucket>/bronze/streaming/ \
-  --recursive \
-  --region us-east-1
+aws glue start-job-run   --job-name alfabetizacao_job_streaming_silver   --region us-east-1
 ```
 
-Para validar o conteúdo do Parquet localmente:
+**Streaming Gold:**
 
 ```bash
-aws s3 cp "s3://<bucket>/bronze/streaming/<arquivo>.parquet" teste_streaming.parquet --region us-east-1
-python -c "import pandas as pd; df=pd.read_parquet('teste_streaming.parquet'); print(df)"
+aws glue start-job-run   --job-name alfabetizacao_job_streaming_gold   --region us-east-1
 ```
+
+**Validação das camadas no S3:**
+
+```bash
+aws s3 ls   s3://<bucket>/bronze/streaming/   --recursive   --region us-east-1
+
+aws s3 ls   s3://<bucket>/silver/streaming/   --recursive   --region us-east-1
+
+aws s3 ls   s3://<bucket>/gold/streaming/   --recursive   --region us-east-1
+```
+
+**Verificação das execuções:**
+
+```bash
+aws glue get-job-runs   --job-name alfabetizacao_job_streaming_silver   --region us-east-1   --max-results 1   --query 'JobRuns[0].[Id,JobRunState,StartedOn,CompletedOn,ErrorMessage]'   --output table
+
+aws glue get-job-runs   --job-name alfabetizacao_job_streaming_gold   --region us-east-1   --max-results 1   --query 'JobRuns[0].[Id,JobRunState,StartedOn,CompletedOn,ErrorMessage]'   --output table
+```
+
+**Validação local do Parquet:**
+
+```bash
+aws s3 cp "s3://<bucket>/silver/streaming/eventos/<arquivo>.parquet" teste_streaming_silver.parquet --region us-east-1
+
+python -c "import pandas as pd; df=pd.read_parquet('teste_streaming_silver.parquet'); print(df); print(); print(df.dtypes)"
+```
+
+Para a Gold:
+
+```bash
+aws s3 cp "s3://<bucket>/gold/streaming/ultimo_indicador_municipio/<arquivo>.parquet" teste_streaming_gold.parquet --region us-east-1
+
+python -c "import pandas as pd; df=pd.read_parquet('teste_streaming_gold.parquet'); print(df.to_string(index=False)); print(); print(df.dtypes)"
+```
+
+> O Pandas é utilizado apenas para validação local dos arquivos Parquet. As transformações das camadas Streaming Silver e Gold são realizadas pelos Glue Jobs com PySpark.
 
 ## 12. Observabilidade e monitoramento
 
@@ -744,6 +861,36 @@ aws s3 ls \
   --region us-east-1
 ```
 
+**Streaming Silver** — processa os eventos da Bronze Streaming:
+
+```bash
+aws glue start-job-run \
+  --job-name alfabetizacao_job_streaming_silver \
+  --region us-east-1
+```
+
+**Streaming Gold** — consolida o estado mais recente de cada município e indicador:
+
+```bash
+aws glue start-job-run \
+  --job-name alfabetizacao_job_streaming_gold \
+  --region us-east-1
+```
+
+Validação das camadas de streaming:
+
+```bash
+aws s3 ls \
+  s3://<bucket>/silver/streaming/ \
+  --recursive \
+  --region us-east-1
+
+aws s3 ls \
+  s3://<bucket>/gold/streaming/ \
+  --recursive \
+  --region us-east-1
+```
+
 **Silver** — crawler, transformação e qualidade, encadeados na AWS:
 
 ```bash
@@ -795,6 +942,11 @@ make clean
 | Print — Producer enviando eventos para o Kinesis | `assets/imagens/` ⏳ |
 | Print — Parquet gerado na Bronze via Lambda | `assets/imagens/` ⏳ |
 | Print — Validação do Parquet com Pandas | `assets/imagens/` ⏳ |
+| Print — Streaming Silver concluída | `assets/imagens/` ⏳ |
+| Print — Parquet gerado na Silver | `assets/imagens/` ⏳ |
+| Print — Streaming Gold concluída | `assets/imagens/` ⏳ |
+| Print — Parquet gerado na Gold | `assets/imagens/` ⏳ |
+| Print — Validação da Gold com Pandas | `assets/imagens/` ⏳ |
 | Print — grafo do Workflow, três etapas concluídas | `assets/imagens/` ⏳ |
 | Print — relatório de qualidade, 10 de 10 aprovadas | `assets/imagens/` ⏳ |
 | Print — estrutura das camadas no bucket S3 | `assets/imagens/` ⏳ |
@@ -822,7 +974,7 @@ make clean
 ├── src/             # código-fonte
 │   ├── config/          #   settings centralizado
 │   ├── ingestion/       #   extração (BigQuery) e escrita (Parquet)
-│   ├── transformation/  #   Bronze → Silver
+│   ├── transformation/  #   Bronze → Silver + streaming Silver/Gold
 │   ├── processing/      #   Silver → Gold
 │   ├── analytics/       #   agregações analíticas
 │   ├── cloud/           #   integração com S3
@@ -899,6 +1051,8 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 | Bronze | Produtor de eventos (streaming) | ✅ |
 | Bronze | Kinesis + Lambda → Parquet | ✅ |
 | Bronze | Streaming gerenciado por Terraform | ✅ |
+| Silver | Streaming Silver — eventos padronizados | ✅ |
+| Gold | Streaming Gold — estado atual por município e indicador | ✅ |
 | Silver | Análise exploratória (CRISP-DM) | ✅ |
 | Silver | Infraestrutura em Terraform | ✅ |
 | Silver | Glue Job de transformação | ✅ |
@@ -922,11 +1076,11 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 | Nome        | Responsabilidade principal | GitHub |
 |-------------|----------------------------|--------|
-| Amanda      | ⏳                         | [@Amanda](https://github.com/Amanda) |
+| Amanda      | ⏳                         | [@Amanda](https://github.com/amandacleite) |
 | Antoni Lima | ⏳                         | [@AntoniLima](https://github.com/AntoniLima) |
-| Joviniano   | ⏳                         | [@Joviniano](https://github.com/Joviniano) |
+| Joviniano   | ⏳                         | [@Joviniano](https://github.com/LiraJoviniano) |
 | Luiza Cunha | ⏳                         | [@luizafcunha](https://github.com/luizafcunha) |
-| Vinicius    | ⏳                         | [@Vinicius](https://github.com/Vinicius) |
+| Vinicius    | ⏳                         | [@Vinicius](https://github.com/ViniciusMoutinhoDev) |
 
 **Curso:** Pós-graduação FIAP — AI Scientist · **Fase:** 2 — Engenharia de Dados · **Ano:** 2026
 

@@ -101,3 +101,15 @@ variable "caminho_lambda_zip" {
   type        = string
   default     = "../../lambda_function.zip"
 }
+
+variable "caminho_script_streaming_silver" {
+  description = "Caminho local do script PySpark da Silver de streaming."
+  type        = string
+  default     = "../../src/transformation/streaming_silver.py"
+}
+
+variable "caminho_script_streaming_gold" {
+  description = "Caminho local do script PySpark da Gold de streaming."
+  type        = string
+  default     = "../../src/transformation/streaming_gold.py"
+}

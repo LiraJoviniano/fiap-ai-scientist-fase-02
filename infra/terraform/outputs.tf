@@ -81,3 +81,13 @@ output "event_source_mapping" {
   description = "UUID do vínculo Kinesis → Lambda."
   value       = aws_lambda_event_source_mapping.streaming.uuid
 }
+
+output "job_streaming_silver" {
+  description = "Glue Job da Silver de streaming."
+  value       = aws_glue_job.streaming_silver.name
+}
+
+output "job_streaming_gold" {
+  description = "Glue Job da Gold de streaming."
+  value       = aws_glue_job.streaming_gold.name
+}
