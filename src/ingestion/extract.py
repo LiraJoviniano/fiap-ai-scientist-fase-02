@@ -1,6 +1,6 @@
 from google.cloud import bigquery
 
-from config.settings import settings
+from src.config.settings import settings
 
 client = bigquery.Client(
     project=settings.GCP_PROJECT_ID
