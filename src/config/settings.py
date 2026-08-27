@@ -1,6 +1,6 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
-import os
 
 from dotenv import load_dotenv
 
@@ -23,6 +23,34 @@ class Settings:
     )
 
     PIPELINE_ENV: str = os.getenv("PIPELINE_ENV", "dev")
+
+    FINOPS_RELATORIO_PREFIX: str = os.getenv("FINOPS_RELATORIO_PREFIX", "")
+    FINOPS_LIFECYCLE_PREFIX: str = os.getenv("FINOPS_LIFECYCLE_PREFIX", "bronze/")
+    FINOPS_TRANSICAO_IA_DIAS: int = int(
+        os.getenv("FINOPS_TRANSICAO_IA_DIAS", "30")
+    )
+    FINOPS_TRANSICAO_GLACIER_DIAS: int = int(
+        os.getenv("FINOPS_TRANSICAO_GLACIER_DIAS", "90")
+    )
+    FINOPS_GLUE_DPU_HORAS_MES: float = float(
+        os.getenv("FINOPS_GLUE_DPU_HORAS_MES", "0")
+    )
+    FINOPS_ATHENA_GB_MES: float = float(os.getenv("FINOPS_ATHENA_GB_MES", "0"))
+    FINOPS_KINESIS_SHARD_HORAS_MES: float = float(
+        os.getenv("FINOPS_KINESIS_SHARD_HORAS_MES", "0")
+    )
+    FINOPS_KINESIS_PUT_MILHAO_MES: float = float(
+        os.getenv("FINOPS_KINESIS_PUT_MILHAO_MES", "0")
+    )
+    FINOPS_LAMBDA_REQUISICOES_MILHAO_MES: float = float(
+        os.getenv("FINOPS_LAMBDA_REQUISICOES_MILHAO_MES", "0")
+    )
+    FINOPS_LAMBDA_GB_SEGUNDOS_MES: float = float(
+        os.getenv("FINOPS_LAMBDA_GB_SEGUNDOS_MES", "0")
+    )
+    FINOPS_BIGQUERY_TIB_MES: float = float(
+        os.getenv("FINOPS_BIGQUERY_TIB_MES", "0")
+    )
 
 
 settings = Settings()

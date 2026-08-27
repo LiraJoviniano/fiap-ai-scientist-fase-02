@@ -243,3 +243,8 @@ terraform.tfvars
 # Relatorios de qualidade sao gerados a cada execucao
 quality/reports/*
 !quality/reports/.gitkeep
+
+# Relatórios gerados localmente
+reports/governance/*.json
+reports/finops/*.json
+reports/finops/*.md

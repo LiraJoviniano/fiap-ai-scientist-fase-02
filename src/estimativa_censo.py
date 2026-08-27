@@ -15,6 +15,7 @@ Uso:
 
 import logging
 
+from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import bigquery
 
 from config.settings import settings
@@ -88,7 +89,8 @@ def estimar(sql: str) -> int:
 
     config = bigquery.QueryJobConfig(dry_run=True, use_query_cache=False)
 
-    return client.query(sql, job_config=config).total_bytes_processed
+    resultado = client.query(sql, job_config=config)
+    return int(resultado.total_bytes_processed or 0)
 
 
 def formatar(bytes_: int) -> str:
@@ -134,7 +136,7 @@ def main():
     for descricao, sql in cenarios.items():
         try:
             varrido = estimar(sql)
-        except Exception as erro:
+        except GoogleAPICallError as erro:
             logger.error(f"{descricao}: {erro}")
             continue
 
