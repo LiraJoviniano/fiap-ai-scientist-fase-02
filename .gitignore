@@ -248,3 +248,6 @@ quality/reports/*
 reports/governance/*.json
 reports/finops/*.json
 reports/finops/*.md
+# Empacotamento da Lambda de streaming (gerado por `make lambda-package`)
+lambda_package/
+lambda_function.zip
