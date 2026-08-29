@@ -635,6 +635,12 @@ Os comandos acima têm atalho via Makefile (seção 18): `make lambda-package`, 
 | Qualidade | Relatório versionado por execução |
 | Consumo | DPU-segundos por execução |
 | Logs | CloudWatch, em `/aws-glue/jobs/output` |
+| Execução da ingestão batch | Logs estruturados em JSON e manifesto por execução |
+| Controles do S3 | Auditoria de criptografia, acesso público, versionamento e lifecycle |
+
+A ingestão batch usa o `MonitorExecucao` para registrar o identificador da execução, horários de início e fim, duração, tabelas processadas, quantidade de linhas, volume em bytes, status e mensagem de erro, quando houver. Os manifestos são gerados em `reports/governance/`, fornecendo rastreabilidade sem ocultar falhas da pipeline.
+
+A auditoria do bucket é somente leitura e pode ser executada com `python -m src.governance.auditoria_s3`. Na validação final, criptografia em repouso, bloqueio de acesso público e lifecycle foram considerados conformes. O versionamento permaneceu desativado e foi registrado como informativo, pois sua ativação também aumentaria o volume armazenado.
 
 **O alerta mais importante não é o de falha — é o de sucesso anômalo.** Este projeto tem evidência própria: a primeira execução da integração rodou sem erro e produziu 5.664 linhas em quarentena, quando o esperado eram cerca de 200. Nenhuma exceção foi lançada; o que denunciou foi a contagem implausível. A causa era ausência estrutural tratada como anomalia — o ano de 2023, que não tem meta por definição. Corrigido, o número caiu para 216 e reconciliou com o diagnóstico.
 
@@ -689,22 +695,30 @@ Uniformidade dessa ordem, em 443 municípios simultaneamente, é assinatura de a
 | Parquet + compressão Snappy | Reduz drasticamente o volume frente a CSV |
 | Particionamento por ano e UF | Athena varre só a partição necessária — cobrança é por dado escaneado |
 | Formato colunar | Consultas leem apenas as colunas usadas |
-| Arquitetura serverless | Nenhum recurso ocioso sendo cobrado |
+| Arquitetura serverless + teardown via Terraform | Processamento sob demanda e remoção dos recursos temporários após a validação |
 | Lifecycle policy no S3 | Bronze antiga migra para classe mais barata |
 | Seleção explícita de colunas na extração | Reduz o volume escaneado no BigQuery |
 
 ### Estimativa mensal
 
-> 🚧 *Preencher com valores reais após a implantação. A estimativa é pedida explicitamente no enunciado.*
+> Snapshot gerado em 29/08/2026 no ambiente de desenvolvimento (`us-east-1`). Os valores representam uma projeção comparativa baseada nas premissas configuradas no `.env`, e não a fatura oficial dos provedores.
 
 | Serviço | Uso estimado | Custo |
 |---|---|---|
-| Amazon S3 — armazenamento | ⏳ GB | ⏳ US$ |
-| Amazon S3 — requisições | ⏳ | ⏳ US$ |
-| Amazon Athena | ⏳ GB escaneados | ⏳ US$ |
-| BigQuery — extração | ⏳ TB processados | ⏳ US$ |
-| Streaming | ⏳ | ⏳ US$ |
-| **Total** | | **⏳ US$/mês** |
+| Amazon S3 — armazenamento | 32 objetos · 190,001 MiB | US$ 0,004268 |
+| AWS Glue | 1,84 DPU-horas | US$ 0,809600 |
+| Amazon Athena | 0 GB escaneados | US$ 0,000000 |
+| BigQuery — extração | 0,061 GB processados, dentro da faixa gratuita | US$ 0,000000 |
+| Amazon Kinesis | 1 shard-hora | US$ 0,015000 |
+| AWS Lambda | 1 invocação · 0,000128 GB-s | US$ 0,000002 |
+| Amazon S3 — requisições | Não isoladas nesta estimativa | Não incluído |
+| **Total estimado** | | **US$ 0,828870/mês** |
+
+O inventário separou o volume por camada: Bronze com 73,987 MiB, Silver com 114,324 MiB, Gold com 1,619 MiB, scripts com 0,069 MiB e relatórios de qualidade com 0,002 MiB. Os relatórios detalhados são gerados em `reports/finops/relatorio-finops.json` e `reports/finops/relatorio-finops.md`.
+
+O lifecycle da Bronze possui duas regras: objetos maiores que 128 KiB migram para Standard-IA após 30 dias e para Glacier Instant Retrieval após 90 dias; uploads multipart incompletos são cancelados depois de sete dias. Ao final da validação, os 35 recursos temporários gerenciados pelo Terraform foram removidos, preservando os dados no S3 e evitando cobrança contínua do Kinesis.
+
+A implementação, as premissas e os limites da estimativa estão detalhados em [`docs/finops/governanca-finops.md`](docs/finops/governanca-finops.md).
 
 **Atenção ao BigQuery:** a cobrança é por volume escaneado na consulta, não por linha retornada. Um `SELECT *` sem filtro varre a tabela inteira mesmo com `LIMIT` — o limite corta o retorno, não a varredura. Selecionar apenas as colunas necessárias é a otimização de maior impacto na etapa de extração.
 
@@ -924,6 +938,11 @@ cp .env.example .env             # preencher com os valores do seu ambiente
 | `AWS_BUCKET` | Bucket do data lake |
 | `KINESIS_STREAM_NAME` | Stream Kinesis do streaming (seção 11) — default: `alfabetizacao-events-dev` |
 | `PIPELINE_ENV` | `dev` ou `prod` |
+| `FINOPS_RELATORIO_PREFIX` | Prefixo opcional considerado no inventário do S3 |
+| `FINOPS_LIFECYCLE_PREFIX` | Prefixo que recebe as regras de lifecycle — default: `bronze/` |
+| `FINOPS_TRANSICAO_IA_DIAS` | Dias até a transição para Standard-IA |
+| `FINOPS_TRANSICAO_GLACIER_DIAS` | Dias até a transição para Glacier Instant Retrieval |
+| `FINOPS_*_MES` | Premissas mensais de uso para Glue, Athena, Kinesis, Lambda e BigQuery |
 
 > ⚠️ **Nenhuma credencial vai para o Git.** O `.env` está no `.gitignore`; o `.env.example` traz apenas os nomes das variáveis.
 
@@ -1104,6 +1123,20 @@ python -m src.ml.interpret_model # recalcula a importância das features
 O notebook completo, com os gráficos que os scripts não geram, está em
 [`notebooks/02_modelagem_ml_final.ipynb`](notebooks/02_modelagem_ml_final.ipynb).
 
+**Governança e FinOps** — gera o inventário, estima os custos, verifica as regras de lifecycle e audita o bucket:
+
+```bash
+python -m src.finops.analise_s3 relatorio
+python -m src.finops.analise_s3 verificar
+python -m src.governance.auditoria_s3
+```
+
+A aplicação das regras é uma operação explícita e só deve ser executada após a conferência da configuração:
+
+```bash
+python -m src.finops.analise_s3 aplicar-lifecycle --aplicar
+```
+
 ### Execução via Makefile
 
 ```bash
@@ -1145,7 +1178,11 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 | Print — Validação da Gold com Pandas | `assets/imagens/` ⏳ |
 | Print — grafo do Workflow, três etapas concluídas | `assets/imagens/` ⏳ |
 | Print — relatório de qualidade, 10 de 10 aprovadas | `assets/imagens/` ⏳ |
-| Print — estrutura das camadas no bucket S3 | `assets/imagens/` ⏳ |
+| Print — testes de Governança e FinOps, 10 aprovados | [`assets/imagens/finops-testes-final.png`](assets/imagens/finops-testes-final.png) ✅ |
+| Print — relatório FinOps atualizado | [`assets/imagens/finops-relatorio-final.png`](assets/imagens/finops-relatorio-final.png) ✅ |
+| Print — regras de lifecycle | [`assets/imagens/finops-lifecycle-final.png`](assets/imagens/finops-lifecycle-final.png) ✅ |
+| Print — auditoria de Governança do S3 | [`assets/imagens/governanca-auditoria-s3-final.png`](assets/imagens/governanca-auditoria-s3-final.png) ✅ |
+| Print — estrutura das camadas no bucket S3 | [`assets/imagens/finops-camadas-s3-final.png`](assets/imagens/finops-camadas-s3-final.png) ✅ |
 | Print — log da execução do Workflow | `assets/imagens/` ⏳ |
 | Print — consulta no Athena sobre a Silver | `assets/imagens/` ⏳ |
 | Print — curva ROC comparando Logistic Regression e Random Forest | `assets/imagens/` ⏳ |
@@ -1208,7 +1245,7 @@ O histórico do repositório é parte da entrega. Nada é commitado direto na `m
 | 9 | `feature/qualidade-dados` | Validações de qualidade | `feat` | ✅ |
 | 10 | `feature/logging-monitoramento` | Logging e monitoramento | `feat` | ⏳ |
 | 11 | `feature/streaming` | Ingestão em streaming (Kinesis + Lambda) | `feat` | ✅ |
-| 12 | `feature/finops` | Monitoramento de custos | `feat` | ⏳ |
+| 12 | `feature/governanca-finops-v2` | Governança, observabilidade e monitoramento de custos | `feat` | ✅ |
 | 13 | `feature/dashboard` | Dashboard analítico | `feat` | ⏳ |
 | 14 | `feature/documentacao` | Documentação técnica e operacional | `docs` | 🚧 |
 | 15 | `feature/ci-cd` *(opcional)* | Integração e entrega contínua | `chore` | ⏳ |
@@ -1270,7 +1307,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 | Gold | Scripts de ML commitados, com dependências declaradas em `requirements.txt` | ⏳ |
 | Gold | Dashboards | ⏳ |
 | Operação | Logging e monitoramento | ✅ |
-| Operação | FinOps e estimativa de custo | ⏳ |
+| Operação | FinOps e estimativa de custo | ✅ |
 | Consumo | Dashboard analítico | ⏳ |
 | Entrega | README e documentação | 🚧 |
 | Entrega | Evidências de execução | ⏳ |
@@ -1282,7 +1319,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 | Nome        | Responsabilidade principal | GitHub |
 |-------------|----------------------------|--------|
-| Amanda      | ⏳                         | [@Amanda](https://github.com/amandacleite) |
+| Amanda      | Governança, observabilidade e FinOps | [@amandacleite](https://github.com/amandacleite) |
 | Antoni Lima | ⏳                         | [@AntoniLima](https://github.com/AntoniLima) |
 | Joviniano   | ⏳                         | [@Joviniano](https://github.com/LiraJoviniano) |
 | Luiza Cunha | ⏳                         | [@luizafcunha](https://github.com/luizafcunha) |
