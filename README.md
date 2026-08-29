@@ -1,3 +1,5 @@
+<!-- Proposta de README atualizado — incorpora Streaming (seção 11) e Machine Learning (seção 17, nova) ao conteúdo já existente em README.md. Não substitui o README.md automaticamente; é o candidato a subir na PR. -->
+
 # Indicador Criança Alfabetizada — Pipeline Híbrida de Dados
 
 **Tech Challenge · Fase 2 — FIAP AI Scientist**
@@ -35,13 +37,14 @@ Pipeline de dados híbrida (batch + streaming) em nuvem, construída sobre Arqui
 14. [Anomalia identificada no Rio Grande do Sul](#14-anomalia-identificada-no-rio-grande-do-sul)
 15. [FinOps — custo e otimização](#15-finops--custo-e-otimização)
 16. [Aplicação em IA e políticas públicas](#16-aplicação-em-ia-e-políticas-públicas)
-17. [Como executar](#17-como-executar)
-18. [Evidências de execução](#18-evidências-de-execução)
-19. [Estrutura do repositório](#19-estrutura-do-repositório)
-20. [Fluxo de trabalho Git](#20-fluxo-de-trabalho-git)
-21. [Roadmap e status](#21-roadmap-e-status)
-22. [Equipe](#22-equipe)
-23. [Licença](#23-licença)
+17. [Modelagem de Machine Learning](#17-modelagem-de-machine-learning)
+18. [Como executar](#18-como-executar)
+19. [Evidências de execução](#19-evidências-de-execução)
+20. [Estrutura do repositório](#20-estrutura-do-repositório)
+21. [Fluxo de trabalho Git](#21-fluxo-de-trabalho-git)
+22. [Roadmap e status](#22-roadmap-e-status)
+23. [Equipe](#23-equipe)
+24. [Licença](#24-licença)
 
 ---
 
@@ -66,6 +69,7 @@ Esta pipeline resolve esse gargalo. Transforma dados públicos brutos em uma cam
 | **Tratamento** | Padronização de esquemas, normalização de chaves territoriais, tipagem correta e integração das entidades |
 | **Qualidade** | Validações automatizadas com relatório versionado a cada execução — registro reprovado vai para quarentena, não é descartado em silêncio |
 | **Camada Gold** | Quatro datasets: série do indicador, evolução temporal, trajetória até 2030 e features para modelagem |
+| **Modelagem preditiva** | Classificação de risco por Random Forest (AUC-ROC 0,748) e clusterização de vulnerabilidade por K-Means (k=4), aplicadas sobre a camada Gold |
 | **Operação** | Logging estruturado, métricas de execução e alertas de falha |
 | **FinOps** | Arquitetura serverless, formato colunar particionado e estimativa de custo mensal documentada |
 
@@ -130,7 +134,7 @@ flowchart LR
 
     subgraph CONSUMO["Consumo"]
         DASH["Dashboard"]
-        ML["Modelos de IA"]
+        ML["Modelos de IA<br/>Random Forest + K-Means"]
         SQL["Athena<br/>consultas ad hoc"]
     end
 
@@ -175,6 +179,7 @@ flowchart LR
 | Formato | Apache Parquet + Snappy | Colunar comprimido | ✅ |
 | Consulta | Amazon Athena | SQL sobre o lake | ⏳ |
 | Streaming | Amazon Kinesis + AWS Lambda | Ingestão near real-time simulada | ✅ |
+| Machine Learning | `scikit-learn` + `joblib` | Classificação de risco (Random Forest) e clustering (K-Means) sobre a Gold — seção 17 | 🚧 |
 | Orquestração | Makefile | Encadeamento das etapas | ⏳ |
 | Qualidade | ⏳ *a definir* | Regras de validação | ⏳ |
 | Dashboard | ⏳ *a definir* | Visualização analítica | ⏳ |
@@ -206,6 +211,8 @@ Declarar as tabelas em Terraform tem vantagem sobre `CREATE TABLE IF NOT EXISTS`
 **Tags em todos os recursos que as suportam** — `Environment`, `Layer`, `ManagedBy`, `Pipeline`, `Project`. Permitem rastrear consumo por camada e sinalizam gestão por IaC: alteração manual pelo console vira divergência que o próximo `apply` desfaz.
 
 **Restrição do ambiente.** O AWS Academy Learner Lab não permite criar roles IAM. O projeto usa a `LabRole` já provisionada, e as credenciais expiram a cada sessão do laboratório.
+
+> A modelagem de Machine Learning (seção 17) roda localmente, fora do Terraform — não provisiona nenhum recurso AWS adicional.
 
 ---
 
@@ -246,6 +253,13 @@ S3 + Athena + execução sob demanda, sem cluster Spark permanente.
 `id_municipio`, `id_uf` e demais identificadores são texto em todas as camadas.
 
 **Trade-off.** Ocupa mais espaço que inteiro e exige atenção nos joins. Em troca, elimina uma classe inteira de falha silenciosa: código que perde zero à esquerda não lança erro, apenas deixa de casar no join — e o município desaparece do resultado sem nenhum aviso.
+
+
+### ADR-006 · Remoção de `variacao_anual` do modelo de risco, por vazamento de dado
+
+Durante a modelagem de classificação de risco (seção 17), a variação do indicador entre 2023 e 2024 (`variacao_anual`) chegou a ser testada como feature e produzia desempenho artificialmente alto.
+
+**Trade-off.** Descartá-la reduz o poder preditivo aparente do modelo — e é exatamente por isso que a decisão importa. `variacao_anual` é o próprio insumo usado para calcular a classificação de trajetória que o modelo tenta prever (seção 7): mantê-la faria o modelo aprender a regra de construção do alvo, não o padrão real por trás do risco. O AUC-ROC caiu depois da remoção (de um valor inflado para 0,748 no teste), e esse número mais baixo é o correto — a métrica antes da correção media vazamento, não capacidade preditiva.
 
 ---
 
@@ -537,6 +551,20 @@ Kinesis, Lambda, Event Source Mapping, Streaming Silver e Streaming Gold são de
 
 A implementação do streaming **não altera o pipeline batch existente**. O fluxo original Bronze → Silver → Qualidade → Gold permanece independente.
 
+### Empacotamento da Lambda
+
+O Terraform espera o pacote de deploy da Lambda em `lambda_function.zip`, na raiz do repositório (variável `caminho_lambda_zip`). Ele é gerado por:
+
+```bash
+make lambda-package
+```
+
+O target copia `src/ingestion/streaming/lambda_handler.py` para uma pasta de build (`lambda_package/`) e instala o PyArrow ali como wheel pré-compilado para Linux (`--platform manylinux2014_x86_64`), independente do sistema operacional de quem executa — necessário porque um `pip install pyarrow` comum no Windows ou macOS baixaria um binário incompatível com o runtime da Lambda (Linux x86_64). A versão fica travada em `pyarrow==25.0.0`, a mesma do `requirements.txt`, em vez de depender do que estiver instalado na máquina de quem monta o pacote.
+
+Rode `make lambda-package` sempre que `lambda_handler.py` mudar, antes do `terraform apply` (seção 18) — é ele quem sobe o zip como código da função.
+
+`lambda_package/` e `lambda_function.zip` são artefatos de build, não fazem parte do código-fonte — estão no `.gitignore`.
+
 ### Execução
 
 **Producer:**
@@ -593,6 +621,10 @@ python -c "import pandas as pd; df=pd.read_parquet('teste_streaming_gold.parquet
 
 > O Pandas é utilizado apenas para validação local dos arquivos Parquet. As transformações das camadas Streaming Silver e Gold são realizadas pelos Glue Jobs com PySpark.
 
+Os comandos acima têm atalho via Makefile (seção 18): `make lambda-package`, `make streaming` (producer + Streaming Silver + Streaming Gold em sequência), `make streaming-producer`, `make streaming-silver`, `make streaming-gold`, `make streaming-status` e `make streaming-ls`.
+
+---
+
 ## 12. Observabilidade e monitoramento
 
 | O que monitoramos | Como |
@@ -646,7 +678,7 @@ A distribuição inteira se deslocou: mediana de −19,8 e p75 de −10,5, contr
 
 Uniformidade dessa ordem, em 443 municípios simultaneamente, é assinatura de alteração metodológica na origem do dado — aprendizado não muda em bloco num ano. Recomenda-se excluir o RS de comparações interestaduais até esclarecimento junto à fonte.
 
-**Consequência prática.** As consultas de trajetória e de retrocesso passaram a separar o estado. Sem isso, o Sul apareceria liderando o retrocesso nacional com 56% dos municípios em queda — conclusão falsa, produzida por um único estado. A consulta `trajetoria_2030_com_rs.sql` mantém a versão sem exclusão, para que a decisão seja auditável.
+**Consequência prática.** As consultas de trajetória e de retrocesso passaram a separar o estado. Sem isso, o Sul apareceria liderando o retrocesso nacional com 56% dos municípios em queda — conclusão falsa, produzida por um único estado. A consulta `trajetoria_2030_com_rs.sql` mantém a versão sem exclusão, para que a decisão seja auditável. O mesmo critério de exclusão é reaplicado na modelagem de ML (seção 17).
 
 ---
 
@@ -705,13 +737,13 @@ A tabela `fato_aluno` classifica cada estudante por `faixa_proximidade` em rela�
 
 ### Casos de uso em IA
 
-**Predição do indicador municipal.** Alvo contínuo (percentual de alunos alfabetizados) no grão município × ano, com poucos milhares de observações anuais — volume adequado para modelos tabulares. Enriquecível com Censo Escolar, IBGE/PNAD e indicadores socioeconômicos.
+**Predição do indicador municipal.** Alvo contínuo (percentual de alunos alfabetizados) no grão município × ano, com poucos milhares de observações anuais — volume adequado para modelos tabulares. Enriquecível com Censo Escolar, IBGE/PNAD e indicadores socioeconômicos. **Ainda não implementado.**
 
-**Classificação de risco de não atingimento de meta.** Alvo binário derivado de meta × resultado. Entrega ao gestor uma lista priorizada de municípios em risco *antes* do fim do ciclo, transformando um indicador retrospectivo em sinal de alerta acionável.
+**Classificação de risco de não atingimento de meta.** Alvo binário derivado de meta × resultado. Entrega ao gestor uma lista priorizada de municípios em risco *antes* do fim do ciclo, transformando um indicador retrospectivo em sinal de alerta acionável. **Implementado — ver seção 17.**
 
-**Clusterização de vulnerabilidade educacional.** Agrupamento não supervisionado de municípios por perfil. Permite desenhar intervenções por tipologia, em vez de tratar mais de cinco mil municípios como casos individuais ou, pior, como média nacional.
+**Clusterização de vulnerabilidade educacional.** Agrupamento não supervisionado de municípios por perfil. Permite desenhar intervenções por tipologia, em vez de tratar mais de cinco mil municípios como casos individuais ou, pior, como média nacional. **Implementado — ver seção 17.**
 
-**Análise além da média.** A distribuição por níveis de desempenho permite identificar a massa de alunos imediatamente abaixo do ponto de corte — o grupo em que intervenção pedagógica focalizada tem maior retorno marginal. A média esconde exatamente esse grupo.
+**Análise além da média.** A distribuição por níveis de desempenho permite identificar a massa de alunos imediatamente abaixo do ponto de corte — o grupo em que intervenção pedagógica focalizada tem maior retorno marginal. A média esconde exatamente esse grupo. **Ainda não implementado.**
 
 ### Impacto em políticas públicas
 
@@ -720,13 +752,145 @@ A tabela `fato_aluno` classifica cada estudante por `faixa_proximidade` em rela�
 | Quais municípios estão mais distantes da meta? | Ranking de gap por meta × resultado |
 | Onde o avanço estagnou? | Série temporal com variação ano a ano |
 | A desigualdade entre regiões está aumentando? | Dispersão do indicador por UF ao longo do tempo |
-| Onde alocar recurso adicional? | Cruzamento de risco predito com tamanho da rede |
+| Onde alocar recurso adicional? | Cruzamento de risco predito com tamanho da rede — ver seção 17 |
 
-**Ressalva de uso responsável.** O indicador mede um recorte específico da alfabetização em um momento específico. Usá-lo para ranquear e punir redes cria incentivo para otimizar o número, não o aprendizado — e o número é sempre mais fácil de otimizar. A camada Gold é desenhada para diagnóstico e alocação de recurso. Essa é uma decisão de projeto, não uma observação acessória.
+**Ressalva de uso responsável.** O indicador mede um recorte específico da alfabetização em um momento específico. Usá-lo para ranquear e punir redes cria incentivo para otimizar o número, não o aprendizado — e o número é sempre mais fácil de otimizar. A camada Gold é desenhada para diagnóstico e alocação de recurso. Essa é uma decisão de projeto, não uma observação acessória. O mesmo princípio se aplica ao score de risco da seção 17: ele é pontuação de priorização, não sentença sobre o desempenho de um município.
 
 ---
 
-## 17. Como executar
+## 17. Modelagem de Machine Learning
+
+Dois dos casos de uso propostos na seção 16 já foram implementados: classificação de
+risco e clusterização de vulnerabilidade. O notebook
+[`notebooks/02_modelagem_ml_final.ipynb`](notebooks/02_modelagem_ml_final.ipynb) parte
+exclusivamente das quatro tabelas da Gold (`analiticos/features_municipio`,
+`indicadores/indicador_municipio`, `indicadores/evolucao_temporal`,
+`indicadores/trajetoria_meta_2030`), sem alterar nenhuma delas.
+
+### Dataset e definição do alvo
+
+Junta `features_municipio` com `trajetoria_meta_2030` por `id_municipio`, mantém apenas
+municípios `elegivel_meta == True` e remove a classificação `sem_meta` (não é risco, é
+"não aplicável"). O alvo `risco` é binário: `1` para municípios classificados como
+`retrocesso` ou `ritmo_insuficiente` na trajetória rumo à meta de 2030, `0` para os
+demais. Depois dos filtros, a base fica com **5.232 municípios**, com proporção
+aproximada de 54%/46% entre as classes — por isso o Random Forest usa
+`class_weight="balanced"`.
+
+Dois problemas de qualidade já conhecidos da Gold são tratados antes do treino:
+`pct_matricula_rural` e `pct_matricula_transporte` (percentuais que ultrapassavam 100%
+por erro de cálculo em etapa anterior do pipeline) são limitados a 100;
+`alunos_por_docente` e `alunos_por_turma` são winsorizados nos percentis 1 e 99.
+
+**Vazamento de dado identificado e corrigido** — ver ADR-006. `variacao_anual` foi
+removida das features por ser o próprio insumo do cálculo de `classificacao_trajetoria`.
+
+**Features finais** — 14 numéricas + 2 categóricas, expandidas por one-hot encoding para
+41 colunas: `total_escolas`, `total_matriculas`, `alunos_por_docente`,
+`alunos_por_turma`, `pct_matricula_integral`, `pct_matricula_biblioteca`,
+`pct_matricula_lab_informatica`, `pct_matricula_banda_larga`,
+`pct_matricula_esgoto_adequado`, `pct_escolas_urbanas`, `indice_infraestrutura`,
+`pct_matricula_rural`, `pct_matricula_transporte`, `taxa_2023`, `sigla_uf`, `regiao`.
+
+### Classificação de risco
+
+Dois modelos, split treino/teste 80/20 estratificado, validação cruzada de 5 dobras:
+
+| Modelo | AUC-ROC (5-fold CV) | AUC-ROC (teste) |
+|---|---:|---:|
+| Logistic Regression (baseline) | 0,774 ± 0,010 | 0,744 |
+| **Random Forest** — `n_estimators=300`, `max_depth=8`, `min_samples_leaf=10`, `class_weight="balanced"` | 0,766 ± 0,011 | **0,748** |
+
+Relatório de classificação do Random Forest no conjunto de teste (limiar 0,5):
+
+```text
+              precision    recall  f1-score   support
+
+   sem risco       0.67      0.77      0.72       567
+       risco       0.67      0.55      0.61       480
+
+    accuracy                           0.67      1047
+   macro avg       0.67      0.66      0.66      1047
+weighted avg       0.67      0.67      0.67      1047
+```
+
+**Leitura honesta:** o modelo separa risco de não-risco de forma **moderada**, não
+excelente. Recall de 55% na classe de risco significa que quase metade dos municípios
+realmente em risco não é sinalizada no limiar padrão. Isso é esperado dado o volume de
+features disponível e é adequado ao uso pretendido — o modelo apoia **priorização**, não
+substitui decisão de gestor.
+
+### Clustering de vulnerabilidade
+
+K-Means com `K=4`, escolhido por comparação de silhouette score entre k=2 e k=7, sobre 10
+features de infraestrutura/contexto estrutural — deliberadamente diferentes das features
+do modelo de risco, porque o objetivo é agrupar por **perfil**, não replicar o modelo:
+
+| Cluster | Índice infra. | % escolas urbanas | Alunos/docente | Taxa 2024 | Municípios |
+|---|---:|---:|---:|---:|---:|
+| 0 | 66,3 | 28,9% | 22,7 | 56,5% | 1.029 |
+| 1 | 93,9 | 76,9% | 14,8 | 67,4% | 1.602 |
+| 2 | 78,8 | 76,7% | 16,2 | 65,9% | 1.358 |
+| 3 | 66,0 | 29,6% | 13,7 | 60,7% | 1.243 |
+
+O cruzamento cluster × trajetória mostra que os clusters **não isolam risco de forma
+limpa** — cada um tem entre 36% e 38% de municípios em `retrocesso`. Confirma a leitura
+da seção 16: infraestrutura sozinha não explica todo o comportamento observado. O
+clustering **complementa** o modelo de risco — dois municípios podem ter o mesmo score de
+risco e perfis estruturais bem diferentes — não o substitui.
+
+### Risco por UF
+
+O modelo treinado é aplicado a toda a base para gerar `prob_risco`, um score de
+priorização por município. **Nota metodológica:** por usar a base inteira (não só o
+conjunto de teste), esse número não deve ser lido como métrica de desempenho — essa já
+foi medida separadamente, na seção anterior. O RS é excluído desta agregação pelo mesmo
+motivo da seção 14: a queda de ~20 p.p. no indicador entre 2023–2024 tem assinatura de
+mudança metodológica na fonte, não retrocesso genuíno, e incluí-lo infla artificialmente
+o risco aparente do estado.
+
+**Sem o RS**, a Bahia lidera com **82,0%** dos municípios classificados em risco, seguida
+por AM (70,8%) e PA (65,4%). No outro extremo: CE (8,2%), GO (18,9%) e MG (19,7%) têm as
+menores proporções. São agregações de classificações municipais — **não significam que a
+UF inteira esteja em risco**.
+
+### Do notebook aos scripts
+
+O notebook foi o ambiente onde tudo foi validado primeiro, e continua sendo a referência
+com os gráficos que os scripts não geram (curva ROC, matriz de confusão, método do
+cotovelo/silhouette, dispersão PCA dos clusters). A mesma lógica foi produtizada em
+`src/ml/`, para rodar fora do Jupyter:
+
+| Script | Papel |
+|---|---|
+| `src/ml/dataset.py` | Carrega e prepara o dataset — lógica compartilhada pelos demais scripts |
+| `src/ml/train.py` | Treina o Random Forest e salva `models/random_forest.pkl` |
+| `src/ml/predict.py` | Aplica o modelo a todos os municípios, salva `results/gold_ml_risco_municipio.parquet` |
+| `src/ml/compare_models.py` | Compara Logistic Regression vs. Random Forest, salva `models/comparacao_modelos.csv` |
+| `src/ml/analyze_risk.py` | Agrega o risco previsto por UF (excluindo RS), salva `results/analise_risco_uf.csv` |
+| `src/ml/interpret_model.py` | Recalcula a importância das features, salva `models/feature_importance_random_forest.csv` |
+
+Comandos de execução na seção 18.
+
+### Pontos em aberto
+
+- `scikit-learn`, `joblib`, `matplotlib` e `seaborn` ainda não constam em
+  `requirements.txt` — sem eles, nem o notebook nem os scripts de `src/ml/` rodam em uma
+  instalação limpa.
+- O notebook fixa `ROOT` como caminho absoluto local (célula 3) — precisa virar caminho
+  relativo antes de outra pessoa do grupo conseguir rodá-lo sem editar a linha.
+- O K-Means não foi persistido: `src/ml/predict.py` não gera a coluna `cluster` porque
+  não existe `models/kmeans.pkl` — o cluster de cada município só existe dentro do
+  notebook.
+- `src/ml/compare_models.py` usa os números da tabela de comparação digitados
+  manualmente a partir da última execução — se o modelo for retreinado com mudança de
+  features, dados ou hiperparâmetros, esse arquivo fica desatualizado até alguém lembrar
+  de atualizá-lo à mão.
+- Notebook e scripts ainda não foram commitados no repositório.
+
+---
+
+## 18. Como executar
 
 ### Pré-requisitos
 
@@ -758,6 +922,7 @@ cp .env.example .env             # preencher com os valores do seu ambiente
 | `GOOGLE_APPLICATION_CREDENTIALS` | Caminho do JSON da service account |
 | `AWS_REGION` | Região do bucket |
 | `AWS_BUCKET` | Bucket do data lake |
+| `KINESIS_STREAM_NAME` | Stream Kinesis do streaming (seção 11) — default: `alfabetizacao-events-dev` |
 | `PIPELINE_ENV` | `dev` ou `prod` |
 
 > ⚠️ **Nenhuma credencial vai para o Git.** O `.env` está no `.gitignore`; o `.env.example` traz apenas os nomes das variáveis.
@@ -837,16 +1002,18 @@ python src/estimativa_censo.py   # dry run: mede a varredura, sem custo
 python src/ingestao_censo.py     # extrai e envia ao S3
 ```
 
-**Infraestrutura** — cria os recursos AWS:
+**Infraestrutura** — cria os recursos AWS. Antes do `apply`, gere o pacote da Lambda de streaming (seção 11) — o Terraform lê o zip para criar a função:
 
 ```bash
+make lambda-package
+
 cd infra/terraform
 terraform init
 terraform apply
 cd ../..
 ```
 
-**Streaming** — simula atualizações do indicador e grava os eventos processados em Parquet na Bronze:
+**Streaming** — simula atualizações do indicador e grava os eventos processados em Parquet na Bronze (atalho: `make streaming-producer`):
 
 ```bash
 python -m src.ingestion.streaming.producer
@@ -921,6 +1088,22 @@ As consultas ficam versionadas em `sql/silver/`, com comentários explicando as 
 pip install -r requirements-dev.txt
 ```
 
+**Machine Learning** — treina o modelo de risco e aplica a toda a base de municípios (seção 17):
+
+```bash
+# as dependências de ML ainda não estão em requirements.txt — instalar manualmente
+pip install scikit-learn joblib matplotlib seaborn
+
+python -m src.ml.train           # treina o Random Forest, salva models/random_forest.pkl
+python -m src.ml.predict         # aplica a todos os municípios, salva results/gold_ml_risco_municipio.parquet
+python -m src.ml.compare_models  # compara Logistic Regression vs. Random Forest
+python -m src.ml.analyze_risk    # agrega o risco previsto por UF, excluindo o RS
+python -m src.ml.interpret_model # recalcula a importância das features
+```
+
+O notebook completo, com os gráficos que os scripts não geram, está em
+[`notebooks/02_modelagem_ml_final.ipynb`](notebooks/02_modelagem_ml_final.ipynb).
+
 ### Execução via Makefile
 
 ```bash
@@ -931,13 +1114,26 @@ make test-bq
 make clean
 ```
 
+Streaming, via Makefile (equivalentes aos comandos manuais da seção 11):
+
+```bash
+make lambda-package     # gera lambda_function.zip a partir do handler real
+make streaming          # producer + Streaming Silver + Streaming Gold, em sequência
+make streaming-producer # só publica eventos no Kinesis
+make streaming-silver   # só o Glue Job da Streaming Silver
+make streaming-gold     # só o Glue Job da Streaming Gold
+make streaming-status   # status das últimas execuções dos dois jobs
+make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold streaming)
+```
+
 ---
 
-## 18. Evidências de execução
+## 19. Evidências de execução
 
 | Evidência | Local |
 |---|---|
 | Notebook de EDA com saídas executadas | [`notebooks/eda_bronze.ipynb`](notebooks/eda_bronze.ipynb) |
+| Notebook de modelagem de ML com saídas executadas | [`notebooks/02_modelagem_ml_final.ipynb`](notebooks/02_modelagem_ml_final.ipynb) |
 | Print — `terraform apply` da infraestrutura atual | `assets/imagens/` ⏳ |
 | Print — Producer enviando eventos para o Kinesis | `assets/imagens/` ⏳ |
 | Print — Parquet gerado na Bronze via Lambda | `assets/imagens/` ⏳ |
@@ -952,12 +1148,15 @@ make clean
 | Print — estrutura das camadas no bucket S3 | `assets/imagens/` ⏳ |
 | Print — log da execução do Workflow | `assets/imagens/` ⏳ |
 | Print — consulta no Athena sobre a Silver | `assets/imagens/` ⏳ |
+| Print — curva ROC comparando Logistic Regression e Random Forest | `assets/imagens/` ⏳ |
+| Print — matriz de confusão do Random Forest | `assets/imagens/` ⏳ |
+| Print — dispersão PCA dos clusters de vulnerabilidade | `assets/imagens/` ⏳ |
 | Vídeo — pipeline executando ponta a ponta | ⏳ |
 | Vídeo executivo (até 5 min) | ⏳ |
 
 ---
 
-## 19. Estrutura do repositório
+## 20. Estrutura do repositório
 
 ```
 .
@@ -966,18 +1165,22 @@ make clean
 ├── data/            # área local das camadas (dados NÃO versionados)
 ├── infra/           # infraestrutura como código
 ├── logs/            # logs de execução (não versionados)
+├── models/          # modelos treinados e métricas de ML (não versionados)
 ├── monitoring/      # alertas, dashboards e métricas
+├── notebooks/       # notebooks de EDA e de modelagem de ML
 ├── pipelines/       # orquestração por camada e por modo
 ├── quality/         # expectativas, validações e relatórios
+├── results/         # saídas de predição do modelo de risco (não versionadas)
 ├── scripts/         # bootstrap, ETL e utilitários
 ├── sql/             # consultas por camada
 ├── src/             # código-fonte
 │   ├── config/          #   settings centralizado
-│   ├── ingestion/       #   extração (BigQuery) e escrita (Parquet)
+│   ├── ingestion/       #   extração (BigQuery), streaming e escrita (Parquet)
 │   ├── transformation/  #   Bronze → Silver + streaming Silver/Gold
 │   ├── processing/      #   Silver → Gold
 │   ├── analytics/       #   agregações analíticas
-│   ├── cloud/           #   integração com S3
+│   ├── ml/              #   dataset, treino, predição e interpretação do modelo de risco
+│   ├── cloud/           #   integração com S3 e Kinesis
 │   ├── finops/          #   monitoramento de custos
 │   ├── models/          #   modelos de dados
 │   └── utils/           #   utilitários compartilhados
@@ -986,7 +1189,7 @@ make clean
 
 ---
 
-## 20. Fluxo de trabalho Git
+## 21. Fluxo de trabalho Git
 
 O histórico do repositório é parte da entrega. Nada é commitado direto na `main`.
 
@@ -1004,11 +1207,12 @@ O histórico do repositório é parte da entrega. Nada é commitado direto na `m
 | 8 | `feature/camada-gold` | Implementação da camada Gold | `feat` | ✅ |
 | 9 | `feature/qualidade-dados` | Validações de qualidade | `feat` | ✅ |
 | 10 | `feature/logging-monitoramento` | Logging e monitoramento | `feat` | ⏳ |
-| 11 | `feature/streaming` | Ingestão em streaming | `feat` | ⏳ |
+| 11 | `feature/streaming` | Ingestão em streaming (Kinesis + Lambda) | `feat` | ✅ |
 | 12 | `feature/finops` | Monitoramento de custos | `feat` | ⏳ |
 | 13 | `feature/dashboard` | Dashboard analítico | `feat` | ⏳ |
 | 14 | `feature/documentacao` | Documentação técnica e operacional | `docs` | 🚧 |
 | 15 | `feature/ci-cd` *(opcional)* | Integração e entrega contínua | `chore` | ⏳ |
+| 16 | `feature/modelagem-ml` | Classificação de risco e clustering (Random Forest + K-Means) | `feat` | 🚧 |
 
 ### Padrão de commits
 
@@ -1037,7 +1241,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 ---
 
-## 21. Roadmap e status
+## 22. Roadmap e status
 
 | Etapa | Entregável | Status |
 |---|---|---|
@@ -1061,7 +1265,9 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 | Silver | Orquestração por Glue Workflow | ✅ |
 | Gold | Indicadores e datasets analíticos | ✅ |
 | Gold | Fonte externa integrada (Censo Escolar) | ✅ |
-| Gold | IA e modelagem | ⏳ |
+| Gold | Modelo de classificação de risco (Random Forest + baseline) | 🚧 |
+| Gold | Clusterização de vulnerabilidade educacional (K-Means) | 🚧 |
+| Gold | Scripts de ML commitados, com dependências declaradas em `requirements.txt` | ⏳ |
 | Gold | Dashboards | ⏳ |
 | Operação | Logging e monitoramento | ✅ |
 | Operação | FinOps e estimativa de custo | ⏳ |
@@ -1072,7 +1278,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 ---
 
-## 22. Equipe
+## 23. Equipe
 
 | Nome        | Responsabilidade principal | GitHub |
 |-------------|----------------------------|--------|
@@ -1086,7 +1292,7 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 
 ---
 
-## 23. Licença
+## 24. Licença
 
 Distribuído sob a licença MIT. Veja [LICENSE](LICENSE).
 

@@ -1,10 +1,8 @@
-# ==================================================
-# FIAP - Tech Challenge Fase 02
-# ==================================================
-
 .PHONY: setup install run test-bq test-aws list-buckets freeze clean help \
         check-terraform tf-init tf-plan tf-apply tf-destroy \
-        workflow crawler silver silver-completa
+        workflow crawler silver silver-completa \
+        streaming streaming-producer streaming-silver streaming-gold \
+        streaming-status streaming-ls lambda-package
 
 PYTHON = python
 
@@ -12,6 +10,13 @@ PYTHON = python
 #     make tf-apply PREFIXO=teste
 PREFIXO ?= alfabetizacao
 BUCKET ?= fiap-ai-scientist-fase-02
+REGION ?= us-east-1
+
+LAMBDA_HANDLER = src/ingestion/streaming/lambda_handler.py
+LAMBDA_BUILD_DIR = lambda_package
+LAMBDA_ZIP = lambda_function.zip
+LAMBDA_PYARROW_VERSION = 25.0.0
+LAMBDA_PYTHON_VERSION = 3.11
 
 setup:
 	$(PYTHON) -m pip install --upgrade pip
@@ -87,6 +92,63 @@ silver:
 silver-completa: tf-apply workflow
 	@echo "Camada Silver concluida e validada"
 
+# Streaming — Kinesis + Lambda ---------------------------------------
+#
+# Fluxo complementar ao pipeline batch: producer -> Kinesis -> Lambda
+# (grava a Bronze Streaming) -> Streaming Silver -> Streaming Gold.
+# Nao depende do Workflow acima nem o altera.
+
+# Gera lambda_function.zip a partir do handler real (src/ingestion/streaming/
+# lambda_handler.py). Usa wheel pre-compilado para Linux (manylinux2014),
+# independente do SO de quem executa - necessario porque um `pip install`
+# comum no Windows/macOS baixaria um binario do PyArrow incompativel com o
+# runtime da Lambda. Versao travada na mesma do requirements.txt.
+lambda-package:
+	rm -rf $(LAMBDA_BUILD_DIR) $(LAMBDA_ZIP)
+	mkdir -p $(LAMBDA_BUILD_DIR)
+	cp $(LAMBDA_HANDLER) $(LAMBDA_BUILD_DIR)/lambda_handler.py
+	pip install pyarrow==$(LAMBDA_PYARROW_VERSION) \
+	  --platform manylinux2014_x86_64 \
+	  --python-version $(LAMBDA_PYTHON_VERSION) \
+	  --only-binary=:all: \
+	  --target $(LAMBDA_BUILD_DIR)
+	cd $(LAMBDA_BUILD_DIR) && zip -r ../$(LAMBDA_ZIP) . -x "*.dist-info/*" > /dev/null
+	@echo "Pacote gerado: $(LAMBDA_ZIP)"
+
+streaming-producer:
+	$(PYTHON) -m src.ingestion.streaming.producer
+
+streaming-silver:
+	aws glue start-job-run \
+	  --job-name $(PREFIXO)_job_streaming_silver \
+	  --region $(REGION)
+
+streaming-gold:
+	aws glue start-job-run \
+	  --job-name $(PREFIXO)_job_streaming_gold \
+	  --region $(REGION)
+
+streaming-status:
+	aws glue get-job-runs \
+	  --job-name $(PREFIXO)_job_streaming_silver \
+	  --region $(REGION) --max-results 1 \
+	  --query 'JobRuns[0].[Id,JobRunState,StartedOn,CompletedOn,ErrorMessage]' \
+	  --output table
+	aws glue get-job-runs \
+	  --job-name $(PREFIXO)_job_streaming_gold \
+	  --region $(REGION) --max-results 1 \
+	  --query 'JobRuns[0].[Id,JobRunState,StartedOn,CompletedOn,ErrorMessage]' \
+	  --output table
+
+streaming-ls:
+	aws s3 ls s3://$(BUCKET)/bronze/streaming/ --recursive --region $(REGION)
+	aws s3 ls s3://$(BUCKET)/silver/streaming/ --recursive --region $(REGION)
+	aws s3 ls s3://$(BUCKET)/gold/streaming/   --recursive --region $(REGION)
+
+# Producer + os dois Glue Jobs, em sequencia.
+streaming: streaming-producer streaming-silver streaming-gold
+	@echo "Streaming disparado - producer + Silver + Gold"
+
 help:
 	@echo ""
 	@echo "Comandos disponíveis:"
@@ -112,4 +174,13 @@ help:
 	@echo "Etapas isoladas (depuracao):"
 	@echo " make crawler         -> So o crawler da Bronze"
 	@echo " make silver          -> So o Glue Job da Silver"
+	@echo ""
+	@echo "Streaming (Kinesis + Lambda):"
+	@echo " make lambda-package     -> Gera lambda_function.zip a partir do handler real"
+	@echo " make streaming          -> Producer + Streaming Silver + Streaming Gold"
+	@echo " make streaming-producer -> So publica eventos no Kinesis"
+	@echo " make streaming-silver   -> So o Glue Job da Streaming Silver"
+	@echo " make streaming-gold     -> So o Glue Job da Streaming Gold"
+	@echo " make streaming-status   -> Status das ultimas execucoes"
+	@echo " make streaming-ls       -> Lista os arquivos gravados no S3"
 	@echo ""

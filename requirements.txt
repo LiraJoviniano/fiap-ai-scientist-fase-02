@@ -15,5 +15,8 @@ db-dtypes==1.4.3
 
 great-expectations>=1.8,<2
 
+scikit-learn>=1.5,<2
+joblib>=1.4,<2
+
 # Dependências futuras (Silver/Gold)
 # pydantic-settings
