@@ -86,12 +86,12 @@ Arquivos menores que 128 KiB permanecem na classe Standard porque a transição 
 
 ## Evidências da execução
 
-A implementação foi validada em um bucket de desenvolvimento e apresentou:
+A implementação foi validada no bucket de desenvolvimento após a execução das pipelines batch e streaming:
 
 ```text
-10 testes automatizados aprovados na execução completa do projeto
-9 objetos inventariados
-68,242 MiB armazenados
+10 testes unitários aprovados
+32 objetos inventariados
+190,001 MiB armazenados
 2 regras de lifecycle ativas
 ```
 
@@ -99,10 +99,26 @@ A implementação foi validada em um bucket de desenvolvimento e apresentou:
 
 | Camada | Objetos | Volume |
 |---|---:|---:|
-| Bronze | 7 | 68,218 MiB |
-| Silver | 1 | 0,016 MiB |
-| Gold | 1 | 0,008 MiB |
-| **Total** | **9** | **68,242 MiB** |
+| Bronze | 9 | 73,987 MiB |
+| Silver | 11 | 114,324 MiB |
+| Gold | 6 | 1,619 MiB |
+| Quality | 1 | 0,002 MiB |
+| Scripts | 5 | 0,069 MiB |
+| **Total** | **32** | **190,001 MiB** |
+
+> **Observação:** Silver e Gold agora contêm resultados reais das pipelines batch e streaming. O inventário também inclui dois pequenos objetos controlados mantidos em `silver/teste_finops/` e `gold/teste_finops/`, utilizados na validação inicial do inventário. O impacto deles na estimativa é residual.
+
+### Estimativa mensal por serviço
+
+| Serviço | Custo mensal estimado (USD) |
+|---|---:|
+| Amazon S3 | 0,004268 |
+| AWS Glue | 0,809600 |
+| Amazon Athena | 0,000000 |
+| Amazon Kinesis | 0,015000 |
+| AWS Lambda | 0,000002 |
+| BigQuery | 0,000000 |
+| **Total estimado** | **0,828870** |
 
 > **Observação:** os sete objetos da Bronze foram produzidos pela ingestão. Os objetos em Silver e Gold são cópias controladas utilizadas somente para validar se o inventário FinOps reconhece e separa corretamente as camadas. Eles não representam a execução completa das transformações Silver e Gold.
 
@@ -116,7 +132,6 @@ A implementação foi validada em um bucket de desenvolvimento e apresentou:
 | Amazon Kinesis | 0,015000 |
 | AWS Lambda | 0,000000 |
 | BigQuery | 0,000000 |
-| **Total estimado** | **0,826621** |
 
 A auditoria do bucket apresentou:
 
