@@ -1,0 +1,5 @@
+[project]
+name = "fiap-ai-scientist-fase-02"
+version = "0.1.0"
+description = "Pipeline de dados hibrida (batch + streaming) para o Indicador Crianca Alfabetizada"
+requires-python = ">=3.11"

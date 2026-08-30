@@ -3,26 +3,68 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
+from src.ml.dataset import carregar_dataset
+
 
 # ------------------------------------------------------------------
 # Caminhos
 # ------------------------------------------------------------------
 
-DATASET_PATH = Path(
-    "data/model/gold/analiticos/features_municipio"
-)
-
-TRAJETORIA_PATH = Path(
-    "data/model/gold/indicadores/trajetoria_meta_2030"
-)
-
 MODEL_PATH = Path(
     "models/random_forest.pkl"
 )
 
-OUTPUT_PATH = Path(
+KMEANS_PATH = Path(
+    "models/kmeans.pkl"
+)
+
+KMEANS_SCALER_PATH = Path(
+    "models/kmeans_scaler.pkl"
+)
+
+FEATURES_CLUSTER = [
+    "indice_infraestrutura",
+    "pct_matricula_integral",
+    "pct_matricula_biblioteca",
+    "pct_matricula_lab_informatica",
+    "pct_matricula_banda_larga",
+    "pct_matricula_esgoto_adequado",
+    "pct_escolas_urbanas",
+    "alunos_por_docente",
+    "alunos_por_turma",
+    "pct_matricula_rural",
+]
+
+OUTPUT_PARQUET = Path(
     "results/gold_ml_risco_municipio.parquet"
 )
+
+OUTPUT_CSV = Path(
+    "results/gold_ml_risco_municipio.csv"
+)
+
+# Mesmas features utilizadas em train.py — mantidas em sincronia manual.
+FEATURES_NUM = [
+    "total_escolas",
+    "total_matriculas",
+    "alunos_por_docente",
+    "alunos_por_turma",
+    "pct_matricula_integral",
+    "pct_matricula_biblioteca",
+    "pct_matricula_lab_informatica",
+    "pct_matricula_banda_larga",
+    "pct_matricula_esgoto_adequado",
+    "pct_escolas_urbanas",
+    "indice_infraestrutura",
+    "pct_matricula_rural",
+    "pct_matricula_transporte",
+    "taxa_2023",
+]
+
+FEATURES_CAT = [
+    "sigla_uf",
+    "regiao",
+]
 
 
 # ------------------------------------------------------------------
@@ -36,29 +78,16 @@ def main() -> None:
     print("=" * 70)
 
     # ------------------------------------------------------------------
-    # Carregamento do dataset
+    # Carregamento do dataset (mesma base e mesmos filtros do treino:
+    # elegivel_meta, sem_meta e a exclusão do RS — ver dataset.py)
     # ------------------------------------------------------------------
 
     print()
-    print(f"[INFO] Carregando dataset: {DATASET_PATH}")
+    print("[INFO] Carregando dataset...")
 
-    df = pd.read_parquet(DATASET_PATH)
+    df = carregar_dataset()
 
     print(f"[INFO] Registros carregados: {len(df):,}")
-
-    # ------------------------------------------------------------------
-    # Join com a trajetória (necessário para classificacao_trajetoria)
-    # ------------------------------------------------------------------
-
-    print(f"[INFO] Carregando trajetória: {TRAJETORIA_PATH}")
-
-    df_trajetoria = pd.read_parquet(TRAJETORIA_PATH)
-
-    df = df.merge(
-        df_trajetoria[["id_municipio", "classificacao_trajetoria"]],
-        on="id_municipio",
-        how="left",
-    )
 
     # ------------------------------------------------------------------
     # Carregamento do modelo
@@ -70,6 +99,11 @@ def main() -> None:
     model = joblib.load(MODEL_PATH)
 
     print(f"[INFO] Modelo carregado: {MODEL_PATH}")
+
+    kmeans = joblib.load(KMEANS_PATH)
+    kmeans_scaler = joblib.load(KMEANS_SCALER_PATH)
+
+    print(f"[INFO] Clustering carregado: {KMEANS_PATH}")
 
     # ------------------------------------------------------------------
     # Features esperadas pelo modelo
@@ -89,46 +123,23 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # Preparação das features
+    # Preparação das features (mesma lógica de train.py: seleciona
+    # explicitamente FEATURES_NUM + FEATURES_CAT, preenche nulos com a
+    # mediana e aplica one-hot com drop_first — a correção de outliers
+    # já veio pronta de carregar_dataset())
     # ------------------------------------------------------------------
 
-    # Remove o target e a coluna de trajetória (usada só como referência,
-    # não entra no modelo) caso existam na base
-    X = df.drop(
-        columns=["risco", "alvo_atingiu_meta", "classificacao_trajetoria"],
-        errors="ignore",
-    ).copy()
+    modelagem = df[FEATURES_NUM + FEATURES_CAT].copy()
 
-    # ------------------------------------------------------------------
-    # Correção de outliers de qualidade de dados (igual ao treino)
-    # ------------------------------------------------------------------
+    modelagem[FEATURES_NUM] = modelagem[FEATURES_NUM].fillna(
+        modelagem[FEATURES_NUM].median()
+    )
 
-    for col in ["pct_matricula_rural", "pct_matricula_transporte"]:
-        if col in X.columns:
-            X[col] = X[col].clip(upper=100)
-
-    for col in ["alunos_por_docente", "alunos_por_turma"]:
-        if col in X.columns:
-            p1, p99 = X[col].quantile([0.01, 0.99])
-            X[col] = X[col].clip(lower=p1, upper=p99)
-
-    # ------------------------------------------------------------------
-    # One-Hot Encoding
-    # ------------------------------------------------------------------
-
-    # As mesmas variáveis categóricas utilizadas no treinamento
-    colunas_categoricas = [
-        coluna
-        for coluna in ["sigla_uf", "regiao"]
-        if coluna in X.columns
-    ]
-
-    if colunas_categoricas:
-        X = pd.get_dummies(
-            X,
-            columns=colunas_categoricas,
-            dtype=int,
-        )
+    X = pd.get_dummies(
+        modelagem,
+        columns=FEATURES_CAT,
+        drop_first=True,
+    )
 
     # ------------------------------------------------------------------
     # Alinhamento com as features do modelo
@@ -164,31 +175,21 @@ def main() -> None:
 
     prob_risco = model.predict_proba(X)[:, 1]
 
+    X_cluster = df[FEATURES_CLUSTER].fillna(df[FEATURES_CLUSTER].median())
+    X_cluster_scaled = kmeans_scaler.transform(X_cluster)
+    cluster = kmeans.predict(X_cluster_scaled)
+
     print("[INFO] Previsões geradas.")
 
     # ------------------------------------------------------------------
     # Montagem do resultado
     # ------------------------------------------------------------------
 
-    # NOTA: "cluster" não entra aqui — o K-Means do notebook ainda não
-    # foi persistido (não existe um models/kmeans.pkl). Adicionar de
-    # volta quando o cluster for salvo no treino.
-    colunas_identificacao = [
-        "id_municipio",
-        "sigla_uf",
-        "regiao",
-        "classificacao_trajetoria",
-        "elegivel_meta",
-    ]
+    resultado = df[
+        ["id_municipio", "sigla_uf", "regiao", "classificacao_trajetoria"]
+    ].copy()
 
-    colunas_identificacao = [
-        coluna
-        for coluna in colunas_identificacao
-        if coluna in df.columns
-    ]
-
-    resultado = df[colunas_identificacao].copy()
-
+    resultado["cluster"] = cluster
     resultado["risco"] = predicao
     resultado["prob_risco"] = prob_risco
 
@@ -201,13 +202,18 @@ def main() -> None:
     # Salvamento
     # ------------------------------------------------------------------
 
-    OUTPUT_PATH.parent.mkdir(
+    OUTPUT_PARQUET.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     resultado.to_parquet(
-        OUTPUT_PATH,
+        OUTPUT_PARQUET,
+        index=False,
+    )
+
+    resultado.to_csv(
+        OUTPUT_CSV,
         index=False,
     )
 
@@ -269,7 +275,7 @@ def main() -> None:
     print()
     print(
         f"[INFO] Resultado salvo em: "
-        f"{OUTPUT_PATH}"
+        f"{OUTPUT_PARQUET} e {OUTPUT_CSV}"
     )
 
     print()

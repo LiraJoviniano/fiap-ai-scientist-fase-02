@@ -15,12 +15,7 @@ OUTPUT_PATH = Path(
     "results/analise_risco_uf.csv"
 )
 
-# UFs excluídas da agregação por apresentar artefato de dado conhecido
-# (ver README, seção 14: queda uniforme de ~20 p.p. no RS entre
-# 2023-2024, incompatível com aprendizado real, tratada como mudança
-# metodológica na fonte). Incluir o RS aqui infla artificialmente o
-# risco aparente do estado.
-UFS_EXCLUIDAS_DA_ANALISE = ["RS"]
+UFS_EXCLUIDAS_DA_ANALISE = []
 
 
 def main() -> None:
@@ -53,21 +48,7 @@ def main() -> None:
     # ------------------------------------------------------------------
 
     if UFS_EXCLUIDAS_DA_ANALISE:
-        print(
-            f"[INFO] Excluindo UFs da análise (artefato de dado "
-            f"conhecido, ver README seção 14): "
-            f"{', '.join(UFS_EXCLUIDAS_DA_ANALISE)}"
-        )
         df = df[~df["sigla_uf"].isin(UFS_EXCLUIDAS_DA_ANALISE)]
-
-    # Restringe à mesma população usada no treino/notebook (municípios
-    # elegíveis e com meta aplicável). Sem esse filtro, o percentual
-    # de risco por UF conta municípios sem trajetória real definida,
-    # divergindo do número já reportado no README/notebook.
-    if "elegivel_meta" in df.columns:
-        df = df[df["elegivel_meta"] == True]
-    if "classificacao_trajetoria" in df.columns:
-        df = df[df["classificacao_trajetoria"] != "sem_meta"]
 
     # ------------------------------------------------------------------
     # 3. Agregação por UF

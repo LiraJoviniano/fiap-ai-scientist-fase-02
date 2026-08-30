@@ -3,6 +3,7 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
+from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
@@ -14,6 +15,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 from src.ml.dataset import carregar_dataset
 
@@ -23,6 +25,23 @@ TEST_SIZE = 0.20
 
 MODEL_DIR = Path("models")
 MODEL_PATH = MODEL_DIR / "random_forest.pkl"
+KMEANS_PATH = MODEL_DIR / "kmeans.pkl"
+KMEANS_SCALER_PATH = MODEL_DIR / "kmeans_scaler.pkl"
+
+K_FINAL = 4
+
+FEATURES_CLUSTER = [
+    "indice_infraestrutura",
+    "pct_matricula_integral",
+    "pct_matricula_biblioteca",
+    "pct_matricula_lab_informatica",
+    "pct_matricula_banda_larga",
+    "pct_matricula_esgoto_adequado",
+    "pct_escolas_urbanas",
+    "alunos_por_docente",
+    "alunos_por_turma",
+    "pct_matricula_rural",
+]
 
 
 def main() -> None:
@@ -199,6 +218,23 @@ def main() -> None:
 
     print()
     print(f"[INFO] Modelo salvo em: {MODEL_PATH}")
+
+    # ------------------------------------------------------------------
+    # 13. CLUSTERIZAÇÃO (K-MEANS)
+    # ------------------------------------------------------------------
+
+    X_cluster = df[FEATURES_CLUSTER].fillna(df[FEATURES_CLUSTER].median())
+
+    kmeans_scaler = StandardScaler()
+    X_cluster_scaled = kmeans_scaler.fit_transform(X_cluster)
+
+    kmeans = KMeans(n_clusters=K_FINAL, random_state=RANDOM_STATE, n_init=10)
+    kmeans.fit(X_cluster_scaled)
+
+    joblib.dump(kmeans_scaler, KMEANS_SCALER_PATH)
+    joblib.dump(kmeans, KMEANS_PATH)
+
+    print(f"[INFO] Clustering salvo em: {KMEANS_PATH}")
 
     print("=" * 70)
 
