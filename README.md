@@ -1155,15 +1155,15 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 |---|---|
 | Notebook de EDA com saídas executadas | [`notebooks/eda_bronze.ipynb`](notebooks/eda_bronze.ipynb) |
 | Notebook de modelagem de ML com saídas executadas | [`notebooks/02_modelagem_ml_final.ipynb`](notebooks/02_modelagem_ml_final.ipynb) |
-| Print — `terraform apply` da infraestrutura atual | `assets/imagens/` ⏳ |
-| Print — Producer enviando eventos para o Kinesis | `assets/imagens/` ⏳ |
-| Print — Parquet gerado na Bronze via Lambda | `assets/imagens/` ⏳ |
-| Print — Validação do Parquet com Pandas | `assets/imagens/` ⏳ |
-| Print — Streaming Silver concluída | `assets/imagens/` ⏳ |
-| Print — Parquet gerado na Silver | `assets/imagens/` ⏳ |
-| Print — Streaming Gold concluída | `assets/imagens/` ⏳ |
-| Print — Parquet gerado na Gold | `assets/imagens/` ⏳ |
-| Print — Validação da Gold com Pandas | `assets/imagens/` ⏳ |
+| Print — `terraform apply` da infraestrutura atual | [`assets/imagens/terraform-apply-atual.png`](assets/imagens/terraform-apply-atual.png) ✅ |
+| Print — Producer enviando eventos para o Kinesis | [`assets/imagens/streaming-producer-kinesis.png`](assets/imagens/streaming-producer-kinesis.png) ✅ |
+| Print — Parquet gerado na Bronze via Lambda | [`assets/imagens/streaming-bronze-parquet-lambda.png`](assets/imagens/streaming-bronze-parquet-lambda.png) ✅ |
+| Print — Validação do Parquet com Pandas | [`assets/imagens/streaming-bronze-validacao-pandas.png`](assets/imagens/streaming-bronze-validacao-pandas.png) ✅ |
+| Print — Streaming Silver concluída | [`assets/imagens/streaming-silver-concluida.png`](assets/imagens/streaming-silver-concluida.png) ✅ |
+| Print — Parquet gerado na Silver | [`assets/imagens/streaming-silver-parquet.png`](assets/imagens/streaming-silver-parquet.png) ✅ |
+| Print — Streaming Gold concluída | [`assets/imagens/streaming-gold-concluida.png`](assets/imagens/streaming-gold-concluida.png) ✅ |
+| Print — Parquet gerado na Gold | [`assets/imagens/streaming-gold-parquet.png`](assets/imagens/streaming-gold-parquet.png) ✅ |
+| Print — Validação da Gold com Pandas | [`assets/imagens/streaming-gold-validacao-pandas.png`](assets/imagens/streaming-gold-validacao-pandas.png) ✅ |
 | Print — grafo do Workflow, três etapas concluídas | `assets/imagens/` ⏳ |
 | Print — relatório de qualidade, 10 de 10 aprovadas | `assets/imagens/` ⏳ |
 | Print — testes de Governança e FinOps, 10 aprovados | [`assets/imagens/finops-testes-final.png`](assets/imagens/finops-testes-final.png) ✅ |
