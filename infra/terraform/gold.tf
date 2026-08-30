@@ -156,7 +156,11 @@ locals {
         // para predição de taxa, não para risco de não atingimento.
         { name = "elegivel_meta", type = "boolean" },
         { name = "taxa_2023", type = "double" },
-        { name = "variacao_anual", type = "double" },
+        {
+          name    = "variacao_anual"
+          type    = "double"
+          comment = "Nao usar como preditor: e o insumo usado para calcular classificacao_trajetoria/risco (ADR-006, README) - vaza o alvo do modelo."
+        },
         { name = "total_escolas", type = "int" },
         { name = "total_matriculas", type = "int" },
         { name = "alunos_por_docente", type = "double" },
@@ -208,8 +212,9 @@ resource "aws_glue_catalog_table" "gold" {
       for_each = each.value.columns
 
       content {
-        name = columns.value.name
-        type = columns.value.type
+        name    = columns.value.name
+        type    = columns.value.type
+        comment = try(columns.value.comment, null)
       }
     }
   }

@@ -91,3 +91,8 @@ output "job_streaming_gold" {
   description = "Glue Job da Gold de streaming."
   value       = aws_glue_job.streaming_gold.name
 }
+
+output "streaming_trigger_silver_para_gold" {
+  description = "Trigger condicional Streaming Silver -> Streaming Gold."
+  value       = aws_glue_trigger.streaming_silver_para_gold.name
+}
