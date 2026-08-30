@@ -9,13 +9,13 @@ import pandas as pd
 RESULTADOS = [
     {
         "Modelo": "Logistic Regression",
-        "AUC-ROC CV": 0.774,
-        "AUC-ROC Teste": 0.744,
+        "AUC-ROC CV": 0.741,
+        "AUC-ROC Teste": 0.715,
     },
     {
         "Modelo": "Random Forest",
-        "AUC-ROC CV": 0.766,
-        "AUC-ROC Teste": 0.748,
+        "AUC-ROC CV": 0.732,
+        "AUC-ROC Teste": 0.720,
     },
 ]
 

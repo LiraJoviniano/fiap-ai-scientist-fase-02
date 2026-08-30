@@ -151,20 +151,20 @@ def carregar_tabela_do_disco(nome_tabela: str) -> pd.DataFrame | None:
     return pd.concat([pd.read_parquet(f) for f in arquivos], ignore_index=True)
 
 
-def carregar_tabela(nome_tabela: str) -> pd.DataFrame:
+def carregar_tabela(nome_tabela: str) -> tuple[pd.DataFrame, str]:
     df = carregar_tabela_do_s3(nome_tabela)
     if df is not None:
-        return df
+        return df, "s3"
 
     df = carregar_tabela_do_disco(nome_tabela)
     if df is not None:
-        return df
+        return df, "disco_local"
 
     print(
         f"[aviso] {nome_tabela}: nem S3 nem disco local disponíveis — "
         "usando dado de exemplo (fallback) só para validar a lógica."
     )
-    return GERADORES_FALLBACK[nome_tabela]()
+    return GERADORES_FALLBACK[nome_tabela](), "sintetico_fallback"
 
 
 def montar_suite_municipios() -> ExpectationSuite:
@@ -240,16 +240,19 @@ def rodar_checks() -> list[dict]:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     resumo = []
 
-    municipios = carregar_tabela("municipios")
+    municipios, fonte_municipios = carregar_tabela("municipios")
     ids_validos = municipios["id_municipio"].astype(str).tolist()
 
+    metas_municipios, fonte_metas = carregar_tabela("metas_municipios")
+    alunos, fonte_alunos = carregar_tabela("alunos")
+
     tabelas = {
-        "municipios": (municipios, montar_suite_municipios()),
-        "metas_municipios": (carregar_tabela("metas_municipios"), montar_suite_metas_municipios(ids_validos)),
-        "alunos": (carregar_tabela("alunos"), montar_suite_alunos(ids_validos)),
+        "municipios": (municipios, montar_suite_municipios(), fonte_municipios),
+        "metas_municipios": (metas_municipios, montar_suite_metas_municipios(ids_validos), fonte_metas),
+        "alunos": (alunos, montar_suite_alunos(ids_validos), fonte_alunos),
     }
 
-    for nome_tabela, (df, suite) in tabelas.items():
+    for nome_tabela, (df, suite, fonte) in tabelas.items():
         salvar_json(EXPECTATIONS_PATH / f"{nome_tabela}_suite.json", suite.to_json_dict())
 
         resultado = validar_tabela(context, nome_tabela, df, suite)
@@ -260,6 +263,7 @@ def rodar_checks() -> list[dict]:
             "tabela": nome_tabela,
             "passou": passou,
             "total_expectativas": len(resultado.get("expectations", [])),
+            "fonte": fonte,
         })
 
     return resumo
@@ -274,6 +278,7 @@ def salvar_relatorio(resumo: list[dict]) -> Path:
         "gerado_em": datetime.now(timezone.utc).isoformat(),
         "tabelas_validadas": len(resumo),
         "tabelas_com_falha": sum(1 for r in resumo if not r["passou"]),
+        "contem_dados_sinteticos": any(r["fonte"] == "sintetico_fallback" for r in resumo),
         "resumo": resumo,
     }
     salvar_json(caminho, payload)
@@ -287,7 +292,14 @@ def main() -> None:
     print(f"\nRelatório de qualidade: {caminho_relatorio}\n")
     for r in resumo:
         status = "OK" if r["passou"] else "FALHOU"
-        print(f"[{status}] {r['tabela']} — {r['total_expectativas']} expectativas checadas")
+        print(f"[{status}] {r['tabela']} — {r['total_expectativas']} expectativas checadas — fonte: {r['fonte']}")
+
+    if any(r["fonte"] == "sintetico_fallback" for r in resumo):
+        print(
+            "\n[ATENCAO] Uma ou mais tabelas usaram dado sintetico de fallback "
+            "(sem S3 nem disco local disponivel). Este relatorio NAO reflete "
+            "a Bronze real e nao deve ser usado como evidencia de execucao."
+        )
 
 
 if __name__ == "__main__":

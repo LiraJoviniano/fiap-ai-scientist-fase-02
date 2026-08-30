@@ -179,7 +179,7 @@ flowchart LR
 | Formato | Apache Parquet + Snappy | Colunar comprimido | ✅ |
 | Consulta | Amazon Athena | SQL sobre o lake | ⏳ |
 | Streaming | Amazon Kinesis + AWS Lambda | Ingestão near real-time simulada | ✅ |
-| Machine Learning | `scikit-learn` + `joblib` | Classificação de risco (Random Forest) e clustering (K-Means) sobre a Gold — seção 17 | 🚧 |
+| Machine Learning | `scikit-learn` + `joblib` | Classificação de risco (Random Forest) e clustering (K-Means) sobre a Gold — seção 17 | ✅ |
 | Orquestração | Makefile | Encadeamento das etapas | ⏳ |
 | Qualidade | ⏳ *a definir* | Regras de validação | ⏳ |
 | Dashboard | ⏳ *a definir* | Visualização analítica | ⏳ |
@@ -189,17 +189,19 @@ flowchart LR
 
 ## 5. Infraestrutura como código
 
-Toda a infraestrutura AWS é declarada em Terraform, em `infra/terraform/`. Um `terraform apply` cria **28 recursos** do zero.
+Toda a infraestrutura AWS é declarada em Terraform, em `infra/terraform/`. Um `terraform apply` cria **36 recursos** do zero.
+
+> ⚠️ Antes do primeiro `apply`, gere o pacote da Lambda de streaming (`make lambda-package`, seção 11) — o Terraform lê `lambda_function.zip` do disco para criar a função, e falha se ele não existir.
 
 | Recurso | Qtde | Papel |
 |---|---:|---|
 | `aws_glue_catalog_database` | 3 | Um por camada do medalhão |
 | `aws_glue_crawler` | 1 | Cataloga a Bronze — 8 include paths explícitos |
-| `aws_glue_catalog_table` | 12 | Tabelas da Silver e da Gold, com schema declarado |
+| `aws_glue_catalog_table` | 13 | Tabelas da Silver (9) e da Gold (4), com schema declarado |
 | `aws_glue_job` | 5 | Silver, qualidade, Gold e Streaming Silver/Gold — Glue 4.0, 2× G.1X |
 | `aws_s3_object` | 5 | Upload dos scripts PySpark |
 | `aws_glue_workflow` | 1 | Orquestração |
-| `aws_glue_trigger` | 4 | Encadeamento condicional |
+| `aws_glue_trigger` | 5 | Encadeamento condicional (4 do batch + 1 da Streaming Gold) |
 | `aws_kinesis_stream` | 1 | Recebe os eventos de streaming |
 | `aws_lambda_function` | 1 | Converte os eventos em Parquet e grava na Bronze |
 | `aws_lambda_event_source_mapping` | 1 | Integra Kinesis → Lambda |
@@ -382,7 +384,7 @@ Dez regras executadas como **Glue Job em Spark SQL** sobre o Catalog, dentro do 
 
 **Princípio de quarentena.** Registro anômalo não some: vai para tabela isolada com o motivo. Descarte silencioso faria um município desaparecer da análise sem que seu gestor jamais soubesse.
 
-O relatório é gerado a cada execução em `s3://<bucket>/quality/reports/`.
+O relatório é gerado a cada execução em `quality/reports/` (local — não sobe para o S3). Cada relatório registra, por tabela, de onde veio o dado (`s3`, `disco_local` ou `sintetico_fallback`) e um alerta (`contem_dados_sinteticos`) caso algum fallback sintético tenha sido usado — nesse caso, o relatório não deve ser lido como evidência da Bronze real.
 
 ---
 
@@ -551,6 +553,8 @@ Kinesis, Lambda, Event Source Mapping, Streaming Silver e Streaming Gold são de
 
 A implementação do streaming **não altera o pipeline batch existente**. O fluxo original Bronze → Silver → Qualidade → Gold permanece independente.
 
+Dentro do streaming, só o primeiro trecho é automático de ponta a ponta (Kinesis → Lambda, via Event Source Mapping). A Streaming Silver precisa ser disparada manualmente; a partir daí, a Streaming Gold dispara sozinha por um `aws_glue_trigger` condicional que observa o sucesso da Silver — o mesmo mecanismo que o workflow do batch já usa entre suas próprias etapas.
+
 ### Empacotamento da Lambda
 
 O Terraform espera o pacote de deploy da Lambda em `lambda_function.zip`, na raiz do repositório (variável `caminho_lambda_zip`). Ele é gerado por:
@@ -559,7 +563,7 @@ O Terraform espera o pacote de deploy da Lambda em `lambda_function.zip`, na rai
 make lambda-package
 ```
 
-O target copia `src/ingestion/streaming/lambda_handler.py` para uma pasta de build (`lambda_package/`) e instala o PyArrow ali como wheel pré-compilado para Linux (`--platform manylinux2014_x86_64`), independente do sistema operacional de quem executa — necessário porque um `pip install pyarrow` comum no Windows ou macOS baixaria um binário incompatível com o runtime da Lambda (Linux x86_64). A versão fica travada em `pyarrow==25.0.0`, a mesma do `requirements.txt`, em vez de depender do que estiver instalado na máquina de quem monta o pacote.
+O target copia `src/ingestion/streaming/lambda_handler.py` para uma pasta de build (`lambda_package/`) e instala o PyArrow ali como wheel pré-compilado para Linux (`--platform manylinux2014_x86_64`), independente do sistema operacional de quem executa — necessário porque um `pip install pyarrow` comum no Windows ou macOS baixaria um binário incompatível com o runtime da Lambda. A versão fica travada em `pyarrow==20.0.0`, **deliberadamente diferente** da `25.0.0` usada no `requirements.txt`: o runtime Python 3.11 da Lambda roda em Amazon Linux 2, com glibc mais antigo que o exigido pelas versões recentes do PyArrow (`manylinux_2_28`) — testado na prática, a Lambda quebrava com `GLIBC_2.27' not found` até travar a versão certa.
 
 Rode `make lambda-package` sempre que `lambda_handler.py` mudar, antes do `terraform apply` (seção 18) — é ele quem sobe o zip como código da função.
 
@@ -579,7 +583,7 @@ python -m src.ingestion.streaming.producer
 aws glue start-job-run   --job-name alfabetizacao_job_streaming_silver   --region us-east-1
 ```
 
-**Streaming Gold:**
+**Streaming Gold:** dispara sozinha quando a Streaming Silver termina com sucesso — não precisa rodar. O comando abaixo só serve para reprocessar manualmente, se necessário:
 
 ```bash
 aws glue start-job-run   --job-name alfabetizacao_job_streaming_gold   --region us-east-1
@@ -621,7 +625,7 @@ python -c "import pandas as pd; df=pd.read_parquet('teste_streaming_gold.parquet
 
 > O Pandas é utilizado apenas para validação local dos arquivos Parquet. As transformações das camadas Streaming Silver e Gold são realizadas pelos Glue Jobs com PySpark.
 
-Os comandos acima têm atalho via Makefile (seção 18): `make lambda-package`, `make streaming` (producer + Streaming Silver + Streaming Gold em sequência), `make streaming-producer`, `make streaming-silver`, `make streaming-gold`, `make streaming-status` e `make streaming-ls`.
+Os comandos acima têm atalho via Makefile (seção 18): `make lambda-package`, `make streaming` (producer + Streaming Silver — a Gold dispara sozinha em seguida), `make streaming-producer`, `make streaming-silver`, `make streaming-gold`, `make streaming-status` e `make streaming-ls`.
 
 ---
 
@@ -751,13 +755,9 @@ A tabela `fato_aluno` classifica cada estudante por `faixa_proximidade` em rela�
 
 ### Casos de uso em IA
 
-**Predição do indicador municipal.** Alvo contínuo (percentual de alunos alfabetizados) no grão município × ano, com poucos milhares de observações anuais — volume adequado para modelos tabulares. Enriquecível com Censo Escolar, IBGE/PNAD e indicadores socioeconômicos. **Ainda não implementado.**
+**Classificação de risco de não atingimento de meta.** Alvo binário derivado de meta × resultado. Entrega ao gestor uma lista priorizada de municípios em risco *antes* do fim do ciclo, transformando um indicador retrospectivo em sinal de alerta acionável. Ver seção 17.
 
-**Classificação de risco de não atingimento de meta.** Alvo binário derivado de meta × resultado. Entrega ao gestor uma lista priorizada de municípios em risco *antes* do fim do ciclo, transformando um indicador retrospectivo em sinal de alerta acionável. **Implementado — ver seção 17.**
-
-**Clusterização de vulnerabilidade educacional.** Agrupamento não supervisionado de municípios por perfil. Permite desenhar intervenções por tipologia, em vez de tratar mais de cinco mil municípios como casos individuais ou, pior, como média nacional. **Implementado — ver seção 17.**
-
-**Análise além da média.** A distribuição por níveis de desempenho permite identificar a massa de alunos imediatamente abaixo do ponto de corte — o grupo em que intervenção pedagógica focalizada tem maior retorno marginal. A média esconde exatamente esse grupo. **Ainda não implementado.**
+**Clusterização de vulnerabilidade educacional.** Agrupamento não supervisionado de municípios por perfil. Permite desenhar intervenções por tipologia, em vez de tratar mais de cinco mil municípios como casos individuais ou, pior, como média nacional. Ver seção 17.
 
 ### Impacto em políticas públicas
 
@@ -878,8 +878,8 @@ cotovelo/silhouette, dispersão PCA dos clusters). A mesma lógica foi produtiza
 | Script | Papel |
 |---|---|
 | `src/ml/dataset.py` | Carrega e prepara o dataset — lógica compartilhada pelos demais scripts |
-| `src/ml/train.py` | Treina o Random Forest e salva `models/random_forest.pkl` |
-| `src/ml/predict.py` | Aplica o modelo a todos os municípios, salva `results/gold_ml_risco_municipio.parquet` |
+| `src/ml/train.py` | Treina o Random Forest e o K-Means, salva `models/random_forest.pkl`, `models/kmeans.pkl` e `models/kmeans_scaler.pkl` |
+| `src/ml/predict.py` | Aplica o modelo e o clustering a todos os municípios, salva `results/gold_ml_risco_municipio.parquet` (e `.csv`) já com a coluna `cluster` |
 | `src/ml/compare_models.py` | Compara Logistic Regression vs. Random Forest, salva `models/comparacao_modelos.csv` |
 | `src/ml/analyze_risk.py` | Agrega o risco previsto por UF (excluindo RS), salva `results/analise_risco_uf.csv` |
 | `src/ml/interpret_model.py` | Recalcula a importância das features, salva `models/feature_importance_random_forest.csv` |
@@ -888,19 +888,10 @@ Comandos de execução na seção 18.
 
 ### Pontos em aberto
 
-- `scikit-learn`, `joblib`, `matplotlib` e `seaborn` ainda não constam em
-  `requirements.txt` — sem eles, nem o notebook nem os scripts de `src/ml/` rodam em uma
-  instalação limpa.
-- O notebook fixa `ROOT` como caminho absoluto local (célula 3) — precisa virar caminho
-  relativo antes de outra pessoa do grupo conseguir rodá-lo sem editar a linha.
-- O K-Means não foi persistido: `src/ml/predict.py` não gera a coluna `cluster` porque
-  não existe `models/kmeans.pkl` — o cluster de cada município só existe dentro do
-  notebook.
 - `src/ml/compare_models.py` usa os números da tabela de comparação digitados
   manualmente a partir da última execução — se o modelo for retreinado com mudança de
   features, dados ou hiperparâmetros, esse arquivo fica desatualizado até alguém lembrar
   de atualizá-lo à mão.
-- Notebook e scripts ainda não foram commitados no repositório.
 
 ---
 
@@ -1110,11 +1101,8 @@ pip install -r requirements-dev.txt
 **Machine Learning** — treina o modelo de risco e aplica a toda a base de municípios (seção 17):
 
 ```bash
-# as dependências de ML ainda não estão em requirements.txt — instalar manualmente
-pip install scikit-learn joblib matplotlib seaborn
-
-python -m src.ml.train           # treina o Random Forest, salva models/random_forest.pkl
-python -m src.ml.predict         # aplica a todos os municípios, salva results/gold_ml_risco_municipio.parquet
+python -m src.ml.train           # treina o Random Forest e o K-Means, salva os .pkl em models/
+python -m src.ml.predict         # aplica modelo e clustering, salva results/gold_ml_risco_municipio.parquet (com cluster)
 python -m src.ml.compare_models  # compara Logistic Regression vs. Random Forest
 python -m src.ml.analyze_risk    # agrega o risco previsto por UF, excluindo o RS
 python -m src.ml.interpret_model # recalcula a importância das features
@@ -1151,10 +1139,10 @@ Streaming, via Makefile (equivalentes aos comandos manuais da seção 11):
 
 ```bash
 make lambda-package     # gera lambda_function.zip a partir do handler real
-make streaming          # producer + Streaming Silver + Streaming Gold, em sequência
+make streaming          # producer + Streaming Silver (a Gold dispara sozinha em seguida)
 make streaming-producer # só publica eventos no Kinesis
 make streaming-silver   # só o Glue Job da Streaming Silver
-make streaming-gold     # só o Glue Job da Streaming Gold
+make streaming-gold     # só o Glue Job da Streaming Gold (reprocessamento manual)
 make streaming-status   # status das últimas execuções dos dois jobs
 make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold streaming)
 ```
@@ -1185,9 +1173,12 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 | Print — estrutura das camadas no bucket S3 | [`assets/imagens/finops-camadas-s3-final.png`](assets/imagens/finops-camadas-s3-final.png) ✅ |
 | Print — log da execução do Workflow | `assets/imagens/` ⏳ |
 | Print — consulta no Athena sobre a Silver | `assets/imagens/` ⏳ |
-| Print — curva ROC comparando Logistic Regression e Random Forest | `assets/imagens/` ⏳ |
-| Print — matriz de confusão do Random Forest | `assets/imagens/` ⏳ |
-| Print — dispersão PCA dos clusters de vulnerabilidade | `assets/imagens/` ⏳ |
+| Print — curva ROC comparando Logistic Regression e Random Forest | [`assets/imagens/ml-curva-roc-logreg-vs-randomforest.png`](assets/imagens/ml-curva-roc-logreg-vs-randomforest.png) ✅ |
+| Print — matriz de confusão do Random Forest | [`assets/imagens/ml-matriz-confusao-randomforest.png`](assets/imagens/ml-matriz-confusao-randomforest.png) ✅ |
+| Print — dispersão PCA dos clusters de vulnerabilidade | [`assets/imagens/ml-clusters-pca.png`](assets/imagens/ml-clusters-pca.png) ✅ |
+| Print — importância das features (Random Forest) | [`assets/imagens/ml-top15-features-importantes-randomforest.png`](assets/imagens/ml-top15-features-importantes-randomforest.png) ✅ |
+| Print — método do cotovelo e silhouette (escolha de K) | [`assets/imagens/ml-kmeans-cotovelo-silhouette.png`](assets/imagens/ml-kmeans-cotovelo-silhouette.png) ✅ |
+| Print — percentual de risco por UF | [`assets/imagens/ml-percentual-risco-municipios-uf.png`](assets/imagens/ml-percentual-risco-municipios-uf.png) ✅ |
 | Vídeo — pipeline executando ponta a ponta | ⏳ |
 | Vídeo executivo (até 5 min) | ⏳ |
 
@@ -1202,7 +1193,7 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 ├── data/            # área local das camadas (dados NÃO versionados)
 ├── infra/           # infraestrutura como código
 ├── logs/            # logs de execução (não versionados)
-├── models/          # modelos treinados e métricas de ML (não versionados)
+├── models/          # modelos treinados e métricas de ML (.pkl versionado p/ reprodutibilidade)
 ├── monitoring/      # alertas, dashboards e métricas
 ├── notebooks/       # notebooks de EDA e de modelagem de ML
 ├── pipelines/       # orquestração por camada e por modo
@@ -1249,7 +1240,7 @@ O histórico do repositório é parte da entrega. Nada é commitado direto na `m
 | 13 | `feature/dashboard` | Dashboard analítico | `feat` | ⏳ |
 | 14 | `feature/documentacao` | Documentação técnica e operacional | `docs` | 🚧 |
 | 15 | `feature/ci-cd` *(opcional)* | Integração e entrega contínua | `chore` | ⏳ |
-| 16 | `feature/modelagem-ml` | Classificação de risco e clustering (Random Forest + K-Means) | `feat` | 🚧 |
+| 16 | `feature/modelagem-ml` *(entregue via `feature/streaming`)* | Classificação de risco e clustering (Random Forest + K-Means) | `feat` | ✅ |
 
 ### Padrão de commits
 
@@ -1302,9 +1293,9 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 | Silver | Orquestração por Glue Workflow | ✅ |
 | Gold | Indicadores e datasets analíticos | ✅ |
 | Gold | Fonte externa integrada (Censo Escolar) | ✅ |
-| Gold | Modelo de classificação de risco (Random Forest + baseline) | 🚧 |
-| Gold | Clusterização de vulnerabilidade educacional (K-Means) | 🚧 |
-| Gold | Scripts de ML commitados, com dependências declaradas em `requirements.txt` | ⏳ |
+| Gold | Modelo de classificação de risco (Random Forest + baseline) | ✅ |
+| Gold | Clusterização de vulnerabilidade educacional (K-Means) | ✅ |
+| Gold | Scripts de ML commitados, com dependências declaradas em `requirements.txt` | ✅ |
 | Gold | Dashboards | ⏳ |
 | Operação | Logging e monitoramento | ✅ |
 | Operação | FinOps e estimativa de custo | ✅ |

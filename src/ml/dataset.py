@@ -45,6 +45,14 @@ def carregar_dataset() -> pd.DataFrame:
         subset=["classificacao_trajetoria"]
     )
 
+    # Exclui o RS da base de modelagem inteira: a queda do indicador
+    # entre 2023-2024 no estado tem assinatura de mudança metodológica
+    # na fonte (ver README, seção 14), atingindo 89,6% dos municípios
+    # do RS — não é retrocesso educacional genuíno. Mesmo filtro
+    # aplicado no notebook (célula 16).
+    df = df[df["sigla_uf"] != "RS"]
+    # Exclui o RS da base de modelagem inteira    
+
     # --------------------------------------------------------------
     # Target de classificação
     #

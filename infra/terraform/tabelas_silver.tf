@@ -246,8 +246,9 @@ resource "aws_glue_catalog_table" "silver" {
       for_each = each.value.columns
 
       content {
-        name = columns.value.name
-        type = columns.value.type
+        name    = columns.value.name
+        type    = columns.value.type
+        comment = try(columns.value.comment, null)
       }
     }
   }

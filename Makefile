@@ -15,7 +15,12 @@ REGION ?= us-east-1
 LAMBDA_HANDLER = src/ingestion/streaming/lambda_handler.py
 LAMBDA_BUILD_DIR = lambda_package
 LAMBDA_ZIP = lambda_function.zip
-LAMBDA_PYARROW_VERSION = 25.0.0
+# Versao presa em 20.0.0 de proposito: e a ultima que ainda publica wheel
+# manylinux2014, compativel com o glibc do runtime Python 3.11 da Lambda
+# (Amazon Linux 2). Versoes mais novas do PyArrow (25.x, usado localmente
+# no requirements.txt) só publicam wheel manylinux_2_28, que quebra na
+# Lambda com erro de GLIBC. Nao sincronizar essa versao com o requirements.txt.
+LAMBDA_PYARROW_VERSION = 20.0.0
 LAMBDA_PYTHON_VERSION = 3.11
 
 setup:
@@ -99,10 +104,10 @@ silver-completa: tf-apply workflow
 # Nao depende do Workflow acima nem o altera.
 
 # Gera lambda_function.zip a partir do handler real (src/ingestion/streaming/
-# lambda_handler.py). Usa wheel pre-compilado para Linux (manylinux2014),
-# independente do SO de quem executa - necessario porque um `pip install`
-# comum no Windows/macOS baixaria um binario do PyArrow incompativel com o
-# runtime da Lambda. Versao travada na mesma do requirements.txt.
+# lambda_handler.py). Usa wheel pre-compilado para Linux (manylinux2014,
+# compativel com o glibc do Amazon Linux 2 - ver LAMBDA_PYARROW_VERSION acima),
+# independente do SO de quem executa. O zip e montado em Python (nao `zip`),
+# porque nem todo Git Bash no Windows tem esse utilitario instalado.
 lambda-package:
 	rm -rf $(LAMBDA_BUILD_DIR) $(LAMBDA_ZIP)
 	mkdir -p $(LAMBDA_BUILD_DIR)
@@ -112,7 +117,7 @@ lambda-package:
 	  --python-version $(LAMBDA_PYTHON_VERSION) \
 	  --only-binary=:all: \
 	  --target $(LAMBDA_BUILD_DIR)
-	cd $(LAMBDA_BUILD_DIR) && zip -r ../$(LAMBDA_ZIP) . -x "*.dist-info/*" > /dev/null
+	python -c "import os, zipfile; zf = zipfile.ZipFile('$(LAMBDA_ZIP)', 'w', zipfile.ZIP_DEFLATED); [zf.write(os.path.join(r, f), os.path.relpath(os.path.join(r, f), '$(LAMBDA_BUILD_DIR)')) for r, d, fs in os.walk('$(LAMBDA_BUILD_DIR)') for f in fs if '.dist-info' not in r]; zf.close()"
 	@echo "Pacote gerado: $(LAMBDA_ZIP)"
 
 streaming-producer:
@@ -145,9 +150,10 @@ streaming-ls:
 	aws s3 ls s3://$(BUCKET)/silver/streaming/ --recursive --region $(REGION)
 	aws s3 ls s3://$(BUCKET)/gold/streaming/   --recursive --region $(REGION)
 
-# Producer + os dois Glue Jobs, em sequencia.
-streaming: streaming-producer streaming-silver streaming-gold
-	@echo "Streaming disparado - producer + Silver + Gold"
+# Producer + Streaming Silver. A Streaming Gold dispara sozinha via
+# trigger condicional quando a Silver terminar com sucesso.
+streaming: streaming-producer streaming-silver
+	@echo "Streaming disparado - producer + Silver (Gold dispara sozinha)"
 
 help:
 	@echo ""

@@ -86,3 +86,25 @@ resource "aws_glue_job" "streaming_gold" {
     Component = "streaming"
   })
 }
+
+resource "aws_glue_trigger" "streaming_silver_para_gold" {
+  name        = "${var.prefixo}_trigger_streaming_gold"
+  description = "Gera a Streaming Gold quando a Streaming Silver terminar com sucesso"
+  type        = "CONDITIONAL"
+
+  predicate {
+    conditions {
+      job_name = aws_glue_job.streaming_silver.name
+      state    = "SUCCEEDED"
+    }
+  }
+
+  actions {
+    job_name = aws_glue_job.streaming_gold.name
+  }
+
+  tags = merge(local.tags_comuns, {
+    Layer     = "gold"
+    Component = "streaming"
+  })
+}
