@@ -1166,15 +1166,15 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 | Print — Streaming Gold concluída | [`assets/imagens/streaming-gold-concluida.png`](assets/imagens/streaming-gold-concluida.png) ✅ |
 | Print — Parquet gerado na Gold | [`assets/imagens/streaming-gold-parquet.png`](assets/imagens/streaming-gold-parquet.png) ✅ |
 | Print — Validação da Gold com Pandas | [`assets/imagens/streaming-gold-validacao-pandas.png`](assets/imagens/streaming-gold-validacao-pandas.png) ✅ |
-| Print — grafo do Workflow, três etapas concluídas | `assets/imagens/` ⏳ |
-| Print — relatório de qualidade, 10 de 10 aprovadas | `assets/imagens/` ⏳ |
+| Print — grafo do Workflow, quatro etapas concluídas (crawler, Silver, qualidade e Gold) | [`assets/imagens/batch-workflow-grafo.png`](assets/imagens/batch-workflow-grafo.png) ✅ |
+| Print — relatório de qualidade, 10 de 10 aprovadas | [`assets/imagens/batch-relatorio-qualidade.png`](assets/imagens/batch-relatorio-qualidade.png) ✅ |
 | Print — testes de Governança e FinOps, 10 aprovados | [`assets/imagens/finops-testes-final.png`](assets/imagens/finops-testes-final.png) ✅ |
 | Print — relatório FinOps atualizado | [`assets/imagens/finops-relatorio-final.png`](assets/imagens/finops-relatorio-final.png) ✅ |
 | Print — regras de lifecycle | [`assets/imagens/finops-lifecycle-final.png`](assets/imagens/finops-lifecycle-final.png) ✅ |
 | Print — auditoria de Governança do S3 | [`assets/imagens/governanca-auditoria-s3-final.png`](assets/imagens/governanca-auditoria-s3-final.png) ✅ |
 | Print — estrutura das camadas no bucket S3 | [`assets/imagens/finops-camadas-s3-final.png`](assets/imagens/finops-camadas-s3-final.png) ✅ |
-| Print — log da execução do Workflow | `assets/imagens/` ⏳ |
-| Print — consulta no Athena sobre a Silver | `assets/imagens/` ⏳ |
+| Print — log da execução do Workflow | [`assets/imagens/batch-workflow-status.png`](assets/imagens/batch-workflow-status.png) ✅ |
+| Print — consulta no Athena sobre a Silver | [`assets/imagens/batch-athena-distribuicao-por-faixa.png`](assets/imagens/batch-athena-distribuicao-por-faixa.png) ✅ |
 | Print — curva ROC comparando Logistic Regression e Random Forest | [`assets/imagens/ml-curva-roc-logreg-vs-randomforest.png`](assets/imagens/ml-curva-roc-logreg-vs-randomforest.png) ✅ |
 | Print — matriz de confusão do Random Forest | [`assets/imagens/ml-matriz-confusao-randomforest.png`](assets/imagens/ml-matriz-confusao-randomforest.png) ✅ |
 | Print — dispersão PCA dos clusters de vulnerabilidade | [`assets/imagens/ml-clusters-pca.png`](assets/imagens/ml-clusters-pca.png) ✅ |
