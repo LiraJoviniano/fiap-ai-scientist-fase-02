@@ -17,8 +17,15 @@ set -euo pipefail
 
 export MSYS_NO_PATHCONV=1
 
+# Le o .env se existir, para pegar AWS_BUCKET sem exigir export manual
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
+
 PREFIXO="${PREFIXO:-alfabetizacao}"
-BUCKET="${BUCKET:-fiap-ai-scientist-fase-02}"
+BUCKET="${BUCKET:-${AWS_BUCKET:?AWS_BUCKET nao definido. Configure no .env ou exporte BUCKET.}}"
 REGIAO="${AWS_REGION:-us-east-1}"
 
 JOB="${PREFIXO}_job_silver"

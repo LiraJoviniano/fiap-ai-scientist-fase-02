@@ -51,13 +51,7 @@ DIRECTORIES=(
 ".github/workflows"
 ".github/ISSUE_TEMPLATE"
 
-"assets/arquitetura"
-"assets/diagramas"
 "assets/imagens"
-
-"config/cloud"
-"config/logging"
-"config/pipeline"
 
 "data/bronze/alfabetizacao"
 "data/bronze/alunos"
@@ -67,50 +61,17 @@ DIRECTORIES=(
 "data/bronze/municipios"
 "data/bronze/streaming"
 
-"data/silver/dimensoes"
-"data/silver/fatos"
-"data/silver/integracao"
-
-"data/gold/analytics"
-"data/gold/dashboards"
-"data/gold/indicadores"
-"data/gold/machine_learning"
-
-"data/external"
-
-"docs/api"
 "docs/arquitetura"
 "docs/finops"
-"docs/monitoramento"
-"docs/qualidade"
 
-"infra/cloud"
-"infra/docker"
 "infra/terraform"
-
-"logs"
-
-"monitoring/alerts"
-"monitoring/dashboards"
-"monitoring/metrics"
-
-"pipelines/batch"
-"pipelines/bronze"
-"pipelines/gold"
-"pipelines/orchestrator"
-"pipelines/silver"
-"pipelines/streaming"
 
 "quality/expectations"
 "quality/reports"
 "quality/validations"
 
-"scripts/deploy"
-"scripts/etl"
 "scripts/setup"
-"scripts/utils"
 
-"sql/bronze"
 "sql/gold"
 "sql/silver"
 
@@ -155,7 +116,6 @@ FILES=(
 ".github/PULL_REQUEST_TEMPLATE.md"
 
 "data/README.md"
-"pipelines/README.md"
 
 "src/__init__.py"
 "src/__main__.py"

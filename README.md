@@ -1,5 +1,3 @@
-<!-- Proposta de README atualizado — incorpora Streaming (seção 11) e Machine Learning (seção 17, nova) ao conteúdo já existente em README.md. Não substitui o README.md automaticamente; é o candidato a subir na PR. -->
-
 # Indicador Criança Alfabetizada — Pipeline Híbrida de Dados
 
 **Tech Challenge · Fase 2 — FIAP AI Scientist**
@@ -69,7 +67,7 @@ Esta pipeline resolve esse gargalo. Transforma dados públicos brutos em uma cam
 | **Tratamento** | Padronização de esquemas, normalização de chaves territoriais, tipagem correta e integração das entidades |
 | **Qualidade** | Validações automatizadas com relatório versionado a cada execução — registro reprovado vai para quarentena, não é descartado em silêncio |
 | **Camada Gold** | Quatro datasets: série do indicador, evolução temporal, trajetória até 2030 e features para modelagem |
-| **Modelagem preditiva** | Classificação de risco por Random Forest (AUC-ROC 0,748) e clusterização de vulnerabilidade por K-Means (k=4), aplicadas sobre a camada Gold |
+| **Modelagem preditiva** | Classificação de risco por Random Forest (AUC-ROC 0,720) e clusterização de vulnerabilidade por K-Means (k=4), aplicadas sobre a camada Gold |
 | **Operação** | Logging estruturado, métricas de execução e alertas de falha |
 | **FinOps** | Arquitetura serverless, formato colunar particionado e estimativa de custo mensal documentada |
 
@@ -261,7 +259,7 @@ S3 + Athena + execução sob demanda, sem cluster Spark permanente.
 
 Durante a modelagem de classificação de risco (seção 17), a variação do indicador entre 2023 e 2024 (`variacao_anual`) chegou a ser testada como feature e produzia desempenho artificialmente alto.
 
-**Trade-off.** Descartá-la reduz o poder preditivo aparente do modelo — e é exatamente por isso que a decisão importa. `variacao_anual` é o próprio insumo usado para calcular a classificação de trajetória que o modelo tenta prever (seção 7): mantê-la faria o modelo aprender a regra de construção do alvo, não o padrão real por trás do risco. O AUC-ROC caiu depois da remoção (de um valor inflado para 0,748 no teste), e esse número mais baixo é o correto — a métrica antes da correção media vazamento, não capacidade preditiva.
+**Trade-off.** Descartá-la reduz o poder preditivo aparente do modelo — e é exatamente por isso que a decisão importa. `variacao_anual` é o próprio insumo usado para calcular a classificação de trajetória que o modelo tenta prever (seção 7): mantê-la faria o modelo aprender a regra de construção do alvo, não o padrão real por trás do risco. O AUC-ROC caiu depois da remoção (de um valor inflado para 0,720 no teste, já considerando também a exclusão do RS — seção 17), e esse número mais baixo é o correto — a métrica antes da correção media vazamento, não capacidade preditiva.
 
 ---
 
@@ -787,8 +785,8 @@ Junta `features_municipio` com `trajetoria_meta_2030` por `id_municipio`, manté
 municípios `elegivel_meta == True` e remove a classificação `sem_meta` (não é risco, é
 "não aplicável"). O alvo `risco` é binário: `1` para municípios classificados como
 `retrocesso` ou `ritmo_insuficiente` na trajetória rumo à meta de 2030, `0` para os
-demais. Depois dos filtros, a base fica com **5.232 municípios**, com proporção
-aproximada de 54%/46% entre as classes — por isso o Random Forest usa
+demais. Depois dos filtros, a base fica com **4.811 municípios**, com proporção
+aproximada de 58%/42% entre as classes — por isso o Random Forest usa
 `class_weight="balanced"`.
 
 Dois problemas de qualidade já conhecidos da Gold são tratados antes do treino:
@@ -812,27 +810,29 @@ Dois modelos, split treino/teste 80/20 estratificado, validação cruzada de 5 d
 
 | Modelo | AUC-ROC (5-fold CV) | AUC-ROC (teste) |
 |---|---:|---:|
-| Logistic Regression (baseline) | 0,774 ± 0,010 | 0,744 |
-| **Random Forest** — `n_estimators=300`, `max_depth=8`, `min_samples_leaf=10`, `class_weight="balanced"` | 0,766 ± 0,011 | **0,748** |
+| Logistic Regression (baseline) | 0,741 ± 0,021 | 0,715 |
+| **Random Forest** — `n_estimators=300`, `max_depth=8`, `min_samples_leaf=10`, `class_weight="balanced"` | 0,732 ± 0,012 | **0,720** |
 
 Relatório de classificação do Random Forest no conjunto de teste (limiar 0,5):
 
 ```text
               precision    recall  f1-score   support
 
-   sem risco       0.67      0.77      0.72       567
-       risco       0.67      0.55      0.61       480
+   sem risco       0.73      0.64      0.68       559
+       risco       0.57      0.67      0.62       404
 
-    accuracy                           0.67      1047
-   macro avg       0.67      0.66      0.66      1047
-weighted avg       0.67      0.67      0.67      1047
+    accuracy                           0.65       963
+   macro avg       0.65      0.65      0.65       963
+weighted avg       0.66      0.65      0.65       963
 ```
 
 **Leitura honesta:** o modelo separa risco de não-risco de forma **moderada**, não
-excelente. Recall de 55% na classe de risco significa que quase metade dos municípios
-realmente em risco não é sinalizada no limiar padrão. Isso é esperado dado o volume de
-features disponível e é adequado ao uso pretendido — o modelo apoia **priorização**, não
-substitui decisão de gestor.
+excelente — e troca precisão por cobertura. Recall de 67% na classe de risco significa
+que o modelo sinaliza a maioria dos municípios realmente em risco; em compensação, a
+precisão de 57% mostra que quase metade dos apontados como risco não estava. É o
+trade-off esperado do `class_weight="balanced"`: prioriza não deixar passar quem está
+em risco, ao custo de mais alarmes falsos. Adequado ao uso pretendido — o modelo apoia
+**priorização**, não substitui decisão de gestor.
 
 ### Clustering de vulnerabilidade
 
@@ -842,13 +842,13 @@ do modelo de risco, porque o objetivo é agrupar por **perfil**, não replicar o
 
 | Cluster | Índice infra. | % escolas urbanas | Alunos/docente | Taxa 2024 | Municípios |
 |---|---:|---:|---:|---:|---:|
-| 0 | 66,3 | 28,9% | 22,7 | 56,5% | 1.029 |
-| 1 | 93,9 | 76,9% | 14,8 | 67,4% | 1.602 |
-| 2 | 78,8 | 76,7% | 16,2 | 65,9% | 1.358 |
-| 3 | 66,0 | 29,6% | 13,7 | 60,7% | 1.243 |
+| 0 | 67,7 | 29,5% | 23,1 | 56,6% | 956 |
+| 1 | 93,4 | 79,3% | 15,6 | 69,7% | 1.423 |
+| 2 | 78,1 | 74,9% | 15,9 | 67,2% | 1.254 |
+| 3 | 64,0 | 28,7% | 14,3 | 60,3% | 1.178 |
 
 O cruzamento cluster × trajetória mostra que os clusters **não isolam risco de forma
-limpa** — cada um tem entre 36% e 38% de municípios em `retrocesso`. Confirma a leitura
+limpa** — cada um tem entre 29% e 36% de municípios em `retrocesso`. Confirma a leitura
 da seção 16: infraestrutura sozinha não explica todo o comportamento observado. O
 clustering **complementa** o modelo de risco — dois municípios podem ter o mesmo score de
 risco e perfis estruturais bem diferentes — não o substitui.
@@ -997,19 +997,21 @@ role_glue = "arn:aws:iam::SEU_ID_DE_CONTA:role/LabRole"
 
 No AWS Academy não é possível criar roles IAM — a `LabRole` já vem provisionada. Em outra conta, a role precisa permitir `glue.amazonaws.com` na *trust policy* e ter acesso de leitura e escrita ao bucket.
 
+> ⚠️ O Terraform não cria o bucket S3 — ele já existe na conta e só é referenciado. O nome em `terraform.tfvars` (`bucket = "..."`) e o `AWS_BUCKET` do `.env` precisam ser o **mesmo bucket**; nada no código valida isso automaticamente.
+
 ### Execução
 
 **Bronze** — extrai do BigQuery, grava Parquet e envia ao S3:
 
 ```bash
-python src/main.py
+python -m src.main
 ```
 
 **Fonte externa** — recorte do Censo Escolar para a Bronze:
 
 ```bash
 python src/estimativa_censo.py   # dry run: mede a varredura, sem custo
-python src/ingestao_censo.py     # extrai e envia ao S3
+python -m src.ingestao_censo     # extrai e envia ao S3
 ```
 
 **Infraestrutura** — cria os recursos AWS. Antes do `apply`, gere o pacote da Lambda de streaming (seção 11) — o Terraform lê o zip para criar a função:
@@ -1164,15 +1166,15 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 | Print — Streaming Gold concluída | [`assets/imagens/streaming-gold-concluida.png`](assets/imagens/streaming-gold-concluida.png) ✅ |
 | Print — Parquet gerado na Gold | [`assets/imagens/streaming-gold-parquet.png`](assets/imagens/streaming-gold-parquet.png) ✅ |
 | Print — Validação da Gold com Pandas | [`assets/imagens/streaming-gold-validacao-pandas.png`](assets/imagens/streaming-gold-validacao-pandas.png) ✅ |
-| Print — grafo do Workflow, três etapas concluídas | `assets/imagens/` ⏳ |
-| Print — relatório de qualidade, 10 de 10 aprovadas | `assets/imagens/` ⏳ |
+| Print — grafo do Workflow, quatro etapas concluídas (crawler, Silver, qualidade e Gold) | [`assets/imagens/batch-workflow-grafo.png`](assets/imagens/batch-workflow-grafo.png) ✅ |
+| Print — relatório de qualidade, 10 de 10 aprovadas | [`assets/imagens/batch-relatorio-qualidade.png`](assets/imagens/batch-relatorio-qualidade.png) ✅ |
 | Print — testes de Governança e FinOps, 10 aprovados | [`assets/imagens/finops-testes-final.png`](assets/imagens/finops-testes-final.png) ✅ |
 | Print — relatório FinOps atualizado | [`assets/imagens/finops-relatorio-final.png`](assets/imagens/finops-relatorio-final.png) ✅ |
 | Print — regras de lifecycle | [`assets/imagens/finops-lifecycle-final.png`](assets/imagens/finops-lifecycle-final.png) ✅ |
 | Print — auditoria de Governança do S3 | [`assets/imagens/governanca-auditoria-s3-final.png`](assets/imagens/governanca-auditoria-s3-final.png) ✅ |
 | Print — estrutura das camadas no bucket S3 | [`assets/imagens/finops-camadas-s3-final.png`](assets/imagens/finops-camadas-s3-final.png) ✅ |
-| Print — log da execução do Workflow | `assets/imagens/` ⏳ |
-| Print — consulta no Athena sobre a Silver | `assets/imagens/` ⏳ |
+| Print — log da execução do Workflow | [`assets/imagens/batch-workflow-status.png`](assets/imagens/batch-workflow-status.png) ✅ |
+| Print — consulta no Athena sobre a Silver | [`assets/imagens/batch-athena-distribuicao-por-faixa.png`](assets/imagens/batch-athena-distribuicao-por-faixa.png) ✅ |
 | Print — curva ROC comparando Logistic Regression e Random Forest | [`assets/imagens/ml-curva-roc-logreg-vs-randomforest.png`](assets/imagens/ml-curva-roc-logreg-vs-randomforest.png) ✅ |
 | Print — matriz de confusão do Random Forest | [`assets/imagens/ml-matriz-confusao-randomforest.png`](assets/imagens/ml-matriz-confusao-randomforest.png) ✅ |
 | Print — dispersão PCA dos clusters de vulnerabilidade | [`assets/imagens/ml-clusters-pca.png`](assets/imagens/ml-clusters-pca.png) ✅ |
@@ -1188,18 +1190,14 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 
 ```
 .
-├── assets/          # diagramas, imagens e evidências visuais
-├── config/          # configurações de cloud, logging e pipeline
+├── assets/          # imagens de evidência da execução
 ├── data/            # área local das camadas (dados NÃO versionados)
 ├── infra/           # infraestrutura como código
-├── logs/            # logs de execução (não versionados)
 ├── models/          # modelos treinados e métricas de ML (.pkl versionado p/ reprodutibilidade)
-├── monitoring/      # alertas, dashboards e métricas
 ├── notebooks/       # notebooks de EDA e de modelagem de ML
-├── pipelines/       # orquestração por camada e por modo
 ├── quality/         # expectativas, validações e relatórios
 ├── results/         # saídas de predição do modelo de risco (não versionadas)
-├── scripts/         # bootstrap, ETL e utilitários
+├── scripts/         # bootstrap e consultas auxiliares
 ├── sql/             # consultas por camada
 ├── src/             # código-fonte
 │   ├── config/          #   settings centralizado
