@@ -10,7 +10,7 @@ Bronze permanece fiel ao que foi extraído; nenhuma transformação ocorre
 aqui, e o filtro de rede fica para a Gold, porque é escolha analítica.
 
 Uso:
-    python src/ingestao_censo.py
+    python -m src.ingestao_censo
 """
 
 import logging
@@ -18,8 +18,8 @@ from pathlib import Path
 
 from google.cloud import bigquery
 
-from cloud.s3 import upload_file
-from config.settings import settings
+from src.cloud.s3 import upload_file
+from src.config.settings import settings
 
 logging.basicConfig(
     level=logging.INFO,

@@ -31,7 +31,7 @@ install:
 	pip install -r requirements.txt
 
 run:
-	$(PYTHON) src/main.py
+	$(PYTHON) -m src.main
 
 test-bq:
 	$(PYTHON) src/teste_bigquery.py

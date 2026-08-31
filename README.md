@@ -997,19 +997,21 @@ role_glue = "arn:aws:iam::SEU_ID_DE_CONTA:role/LabRole"
 
 No AWS Academy não é possível criar roles IAM — a `LabRole` já vem provisionada. Em outra conta, a role precisa permitir `glue.amazonaws.com` na *trust policy* e ter acesso de leitura e escrita ao bucket.
 
+> ⚠️ O Terraform não cria o bucket S3 — ele já existe na conta e só é referenciado. O nome em `terraform.tfvars` (`bucket = "..."`) e o `AWS_BUCKET` do `.env` precisam ser o **mesmo bucket**; nada no código valida isso automaticamente.
+
 ### Execução
 
 **Bronze** — extrai do BigQuery, grava Parquet e envia ao S3:
 
 ```bash
-python src/main.py
+python -m src.main
 ```
 
 **Fonte externa** — recorte do Censo Escolar para a Bronze:
 
 ```bash
 python src/estimativa_censo.py   # dry run: mede a varredura, sem custo
-python src/ingestao_censo.py     # extrai e envia ao S3
+python -m src.ingestao_censo     # extrai e envia ao S3
 ```
 
 **Infraestrutura** — cria os recursos AWS. Antes do `apply`, gere o pacote da Lambda de streaming (seção 11) — o Terraform lê o zip para criar a função:
