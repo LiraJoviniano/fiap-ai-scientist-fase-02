@@ -209,8 +209,7 @@ def montar_suite_alunos(ids_municipios_validos: list[str]) -> ExpectationSuite:
     suite.add_expectation(
         gxe.ExpectColumnValuesToBeInSet(column="id_municipio", value_set=ids_municipios_validos)
     )
-    # TODO: ajustar min/max de 'proficiencia' após confirmar a escala exata
-    # no dicionario.parquet (o corte oficial do Saeb usado no indicador é 743).
+    
     suite.add_expectation(
         gxe.ExpectColumnValuesToBeBetween(column="proficiencia", min_value=0, max_value=1000)
     )

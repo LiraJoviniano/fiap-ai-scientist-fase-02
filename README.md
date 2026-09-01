@@ -1,4 +1,4 @@
-# Indicador Criança Alfabetizada — Pipeline Híbrida de Dados
+# Indicador Criança Alfabetizada — Pipeline em batch e streaming
 
 **Tech Challenge · Fase 2 — FIAP AI Scientist**
 
@@ -1256,41 +1256,40 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 
 ## 20. Estrutura do repositório
 
-```
 .
-├── assets/          # imagens de evidência da execução
+├── .github/         # template de PR e CODEOWNERS
+├── assets/imagens/  # 25 imagens de evidência da execução
 ├── data/            # área local das camadas (dados NÃO versionados)
 ├── docs/
-│   ├── arquitetura/ # documentação de arquitetura e linhagem dos dados
-│   ├── dashboard/   # dashboard analítico desenvolvido no Power BI
-│   └── finops/      # documentação complementar de Governança e FinOps
-├── infra/           # infraestrutura como código
-├── models/          # modelos treinados e métricas de ML (.pkl versionado p/ reprodutibilidade)
-├── notebooks/       # notebooks de EDA e de modelagem de ML
+│   ├── arquitetura/ #   linhagem de dados
+│   ├── dashboard/   #   relatório do Power BI (.pbix)
+│   └── finops/      #   governança e custos
+├── infra/
+│   ├── executar_*.sh    #   disparo e acompanhamento do Workflow
+│   └── terraform/       #   infraestrutura declarada (8 arquivos .tf)
+├── models/          # modelos treinados (.pkl versionado p/ reprodutibilidade)
+├── notebooks/       # EDA da Bronze e modelagem de ML
 ├── quality/
-│   ├── run_quality_checks.py   # validação da Bronze (Great Expectations)
-│   ├── expectations/           # suítes declaradas, geradas pelo script
-│   ├── validations/            # resultado detalhado por execução
-│   └── reports/                # relatórios consolidados
-├── reports/         # relatórios gerados de Governança, FinOps e execução
-├── results/         # saídas de predição do modelo de risco (não versionadas)
-├── scripts/         # bootstrap e consultas auxiliares
-├── sql/             # consultas por camada
+│   ├── run_quality_checks.py  #   validação da Bronze (Great Expectations)
+│   ├── expectations/          #   suítes declaradas, geradas pelo script
+│   ├── validations/           #   resultado detalhado por execução
+│   └── reports/               #   relatórios consolidados
+├── scripts/         # bootstrap e executor de consultas no Athena
+├── sql/             # consultas versionadas por camada (silver, gold)
 ├── src/             # código-fonte
 │   ├── config/          #   settings centralizado
-│   ├── ingestion/       #   extração (BigQuery), streaming e escrita (Parquet)
-│   ├── transformation/  #   Bronze → Silver + streaming Silver/Gold
-│   ├── processing/      #   Silver → Gold
-│   ├── analytics/       #   agregações analíticas
-│   ├── ml/              #   dataset, treino, predição e interpretação do modelo de risco
+│   ├── ingestion/       #   extração (BigQuery), escrita Parquet e streaming
+│   ├── transformation/  #   Silver, Gold, qualidade e streaming Silver/Gold
+│   ├── ml/              #   dataset, treino, predição e interpretação
 │   ├── cloud/           #   integração com S3 e Kinesis
+│   ├── governance/      #   auditoria do S3 e observabilidade
 │   ├── finops/          #   monitoramento de custos
-│   ├── models/          #   modelos de dados
-│   └── utils/           #   utilitários compartilhados
-└── tests/           # testes unitários, de integração e e2e
-```
-
----
+│   ├── models/          #   modelos de dados (evento de streaming)
+│   ├── analytics/       #   reservado para agregações analíticas
+│   ├── processing/      #   reservado
+│   └── utils/           #   reservado
+└── tests/           # testes unitários (governança e FinOps)
+...
 
 ## 21. Fluxo de trabalho Git
 
@@ -1313,7 +1312,7 @@ test: adiciona teste de integridade referencial da Silver
 
 ### Pull Requests
 
-Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). A descrição explica, em linguagem simples:
+Toda branch entra na `main` por Pull Request. A descrição explica, em linguagem simples:
 
 - **O que** foi feito
 - **Por que** foi feito assim — decisões tomadas e alternativas descartadas
