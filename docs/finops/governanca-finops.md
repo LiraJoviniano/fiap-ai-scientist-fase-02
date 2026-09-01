@@ -120,19 +120,6 @@ A implementação foi validada no bucket de desenvolvimento após a execução d
 | BigQuery | 0,000000 |
 | **Total estimado** | **0,828870** |
 
-> **Observação:** os sete objetos da Bronze foram produzidos pela ingestão. Os objetos em Silver e Gold são cópias controladas utilizadas somente para validar se o inventário FinOps reconhece e separa corretamente as camadas. Eles não representam a execução completa das transformações Silver e Gold.
-
-### Estimativa mensal por serviço
-
-| Serviço | Custo mensal estimado (USD) |
-|---|---:|
-| Amazon S3 | 0,001533 |
-| AWS Glue | 0,809600 |
-| Amazon Athena | 0,000488 |
-| Amazon Kinesis | 0,015000 |
-| AWS Lambda | 0,000000 |
-| BigQuery | 0,000000 |
-
 A auditoria do bucket apresentou:
 
 ```text
