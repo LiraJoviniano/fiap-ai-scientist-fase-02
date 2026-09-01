@@ -4,7 +4,7 @@
 
 Pipeline de dados híbrida (batch + streaming) em nuvem, construída sobre Arquitetura Medalhão (Bronze → Silver → Gold), para integrar, tratar e disponibilizar os dados do **Indicador Criança Alfabetizada** — a métrica oficial que acompanha o percentual de estudantes alfabetizados ao final do 2º ano do Ensino Fundamental.
 
-![Status](https://img.shields.io/badge/status-em%20desenvolvimento-yellow)
+![Status](https://img.shields.io/badge/status-concluído-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![Cloud](https://img.shields.io/badge/cloud-AWS-orange)
 ![Fonte](https://img.shields.io/badge/fonte-BigQuery-4285F4)
@@ -13,7 +13,7 @@ Pipeline de dados híbrida (batch + streaming) em nuvem, construída sobre Arqui
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > **Legenda de status:** ✅ concluído · 🚧 em andamento · ⏳ planejado
-> **Documentação:** este README é o documento único do projeto — problema, arquitetura, decisões, execução e evidências.
+> **Documentação:** este README é o documento principal do projeto — problema, arquitetura, decisões, execução e evidências. Detalhes complementares estão disponíveis em `docs/`.
 
 ---
 
@@ -34,15 +34,14 @@ Pipeline de dados híbrida (batch + streaming) em nuvem, construída sobre Arqui
 13. [Análise exploratória](#13-análise-exploratória)
 14. [Anomalia identificada no Rio Grande do Sul](#14-anomalia-identificada-no-rio-grande-do-sul)
 15. [FinOps — custo e otimização](#15-finops--custo-e-otimização)
-16. [Aplicação em IA e políticas públicas](#16-aplicação-em-ia-e-políticas-públicas)
+16. [Consumo analítico, IA e políticas públicas](#16-consumo-analítico-ia-e-políticas-públicas)
 17. [Modelagem de Machine Learning](#17-modelagem-de-machine-learning)
 18. [Como executar](#18-como-executar)
 19. [Evidências de execução](#19-evidências-de-execução)
 20. [Estrutura do repositório](#20-estrutura-do-repositório)
 21. [Fluxo de trabalho Git](#21-fluxo-de-trabalho-git)
 22. [Roadmap e status](#22-roadmap-e-status)
-23. [Equipe](#23-equipe)
-24. [Licença](#24-licença)
+23. [Licença](#23-licença)
 
 ---
 
@@ -159,7 +158,6 @@ flowchart LR
     OBS -.observa.-> LAKE
 ```
 
-> ⏳ Complementar com diagrama em `assets/arquitetura/` usando os ícones oficiais AWS.
 
 **Princípio que orienta todo o projeto: o repositório contém apenas código; os dados moram no S3.** O `.gitignore` bloqueia arquivos de dados em `data/`, que existe localmente só como área de trabalho. Versionar Parquet de milhões de linhas estouraria os limites do GitHub e contaminaria o histórico — que é, ele próprio, critério de avaliação.
 
@@ -175,13 +173,12 @@ flowchart LR
 | Build | `Makefile` | Automação das principais tarefas do projeto | ✅ |
 | Armazenamento | Amazon S3 (`boto3` 1.43) | Data lake medalhão com upload automático da camada Bronze | ✅ |
 | Formato | Apache Parquet + Snappy | Colunar comprimido | ✅ |
-| Consulta | Amazon Athena | SQL sobre o lake | ⏳ |
+| Consulta | Amazon Athena | SQL sobre o lake | ✅ |
 | Streaming | Amazon Kinesis + AWS Lambda | Ingestão near real-time simulada | ✅ |
 | Machine Learning | `scikit-learn` + `joblib` | Classificação de risco (Random Forest) e clustering (K-Means) sobre a Gold — seção 17 | ✅ |
-| Orquestração | Makefile | Encadeamento das etapas | ⏳ |
-| Qualidade | ⏳ *a definir* | Regras de validação | ⏳ |
-| Dashboard | ⏳ *a definir* | Visualização analítica | ⏳ |
-| Padronização | `ruff` · `black` · `pytest` · `pre-commit` | Qualidade de código | ⏳ |
+| Orquestração | Makefile | Encadeamento das etapas | ✅ |
+| Qualidade | Great Expectations + Spark SQL | Validação da Bronze e regras Q1–Q10 na Silver | ✅ |
+| Dashboard | Power BI | Visualização dos indicadores territoriais, trajetória 2030, infraestrutura e risco | ✅ |
 
 ---
 
@@ -359,7 +356,50 @@ A coluna `alfabetizado` marca como `0` os 512.153 alunos ausentes da avaliação
 
 ## 9. Qualidade de dados
 
-Dez regras executadas como **Glue Job em Spark SQL** sobre o Catalog, dentro do Workflow. Regra bloqueante reprovada faz o Job falhar e interrompe o fluxo — o portão entre Silver e Gold é comportamento da AWS, não disciplina de quem executa.
+A qualidade é verificada em duas frentes, com ferramentas e momentos distintos:
+
+| Frente | Ferramenta | Camada | Quando roda | Bloqueia? |
+|---|---|---|---|---|
+| **Bronze** | Great Expectations | dado bruto, como veio da fonte | sob demanda, localmente | não |
+| **Silver** | Spark SQL sobre o Catalog | dado transformado e integrado | dentro do Workflow, a cada execução | sim |
+
+A separação é deliberada. A Bronze valida **o que a fonte entregou** — se o contrato de origem mudou, se apareceu duplicata, se um valor saiu da faixa plausível. A Silver valida **o que nós construímos** — se a transformação preservou o que devia e se as decisões de integração continuam válidas.
+
+Reprovar na Bronze é informação sobre o produtor do dado; reprovar na Silver é defeito nosso. Por isso só a segunda interrompe o fluxo.
+
+### Validação da Bronze — Great Expectations
+
+Executada por `quality/run_quality_checks.py`, sobre três tabelas da camada bruta.
+
+```bash
+python -m quality.run_quality_checks
+```
+
+| Tabela | Expectativas |
+|---|---|
+| `municipios` | Unicidade composta de `id_municipio` + `ano` + `serie` + `rede`; `id_municipio` e `ano` não nulos; `taxa_alfabetizacao` entre 0 e 100 |
+| `metas_municipios` | Unicidade composta de `id_municipio` + `ano` + `rede`; `id_municipio` não nulo e presente na lista de municípios válidos; `meta_alfabetizacao_2024` a `_2030` entre 0 e 100 |
+| `alunos` | `id_municipio` e `id_aluno` não nulos; `id_municipio` presente na lista de municípios válidos; `proficiencia` dentro da faixa da escala Saeb |
+
+A verificação de `id_municipio` contra a lista extraída da própria tabela `municipios` é uma checagem de **integridade referencial na origem** — feita antes de qualquer transformação, quando ainda é possível atribuir o problema à fonte.
+
+**Três origens, em ordem de preferência.** O script tenta ler do S3; se a credencial expirou ou o objeto não existe, cai para `data/bronze/` no disco; se nem isso, gera dados sintéticos para manter a lógica executável.
+
+O fallback sintético é conveniência de desenvolvimento e risco de entrega: valida dado inventado e reportaria sucesso. Por isso **cada relatório registra a origem por tabela** (`s3`, `disco_local` ou `sintetico_fallback`) e marca `contem_dados_sinteticos` no cabeçalho. Relatório com essa marca não é evidência da Bronze real, e o script avisa isso na saída.
+
+**Artefatos gerados**, todos locais:
+
+| Caminho | Conteúdo |
+|---|---|
+| `quality/expectations/<tabela>_suite.json` | As expectativas declaradas, em formato portável |
+| `quality/validations/<tabela>_<timestamp>.json` | O resultado detalhado de cada validação |
+| `quality/reports/relatorio_<timestamp>.json` | Resumo consolidado, com origem e contagem de falhas |
+
+Separar suíte de resultado permite comparar execuções: a suíte é o contrato esperado, e o resultado é o que a fonte entregou naquele momento.
+
+### Validação da Silver — Spark SQL
+
+Dez regras dentro do Workflow, executadas após a construção da camada. Regra bloqueante reprovada faz o Job falhar e interrompe o fluxo — o portão entre Silver e Gold é comportamento da AWS, não disciplina de quem executa.
 
 **Última execução: 10 de 10 aprovadas, 0 bloqueios.**
 
@@ -382,7 +422,7 @@ Dez regras executadas como **Glue Job em Spark SQL** sobre o Catalog, dentro do 
 
 **Princípio de quarentena.** Registro anômalo não some: vai para tabela isolada com o motivo. Descarte silencioso faria um município desaparecer da análise sem que seu gestor jamais soubesse.
 
-O relatório é gerado a cada execução em `quality/reports/` (local — não sobe para o S3). Cada relatório registra, por tabela, de onde veio o dado (`s3`, `disco_local` ou `sintetico_fallback`) e um alerta (`contem_dados_sinteticos`) caso algum fallback sintético tenha sido usado — nesse caso, o relatório não deve ser lido como evidência da Bronze real.
+O relatório da Silver é gravado em `s3://<bucket>/quality/reports/` a cada execução do Workflow e baixado para `quality/reports/` por `infra/executar_workflow.sh`. Versionar relatórios permite comparar a qualidade ao longo do tempo — a fonte muda, e a pipeline precisa perceber quando isso acontece.
 
 ---
 
@@ -726,9 +766,24 @@ A implementação, as premissas e os limites da estimativa estão detalhados em 
 
 ---
 
-## 16. Aplicação em IA e políticas públicas
+## 16. Consumo analítico, IA e políticas públicas
 
-A camada Gold não é o fim da pipeline — é o insumo da próxima etapa. Foi desenhada desde o início pensando em consumo por modelos.
+A camada Gold não é o fim da pipeline — é a camada que transforma os dados processados em informação utilizável. Ela alimenta o dashboard no Power BI, as análises voltadas à gestão educacional e os modelos de Inteligência Artificial.
+
+### Dashboard analítico — Power BI
+
+A camada Gold é consumida por um dashboard desenvolvido no Power BI, que transforma os dados processados pela pipeline em informações voltadas à tomada de decisão na educação.
+
+| Página | Pergunta respondida |
+|---|---|
+| **Indicadores Territoriais** | Quais regiões e estados avançaram ou retrocederam entre 2023 e 2024? |
+| **Trajetória 2030** | Quais municípios já atingiram a meta de 80% e quais estão em ritmo insuficiente ou em retrocesso? |
+| **Infraestrutura** | Como infraestrutura escolar, quantidade de alunos por docente e alfabetização se relacionam? |
+| **Risco de não atingimento** | Quais municípios devem ser priorizados para investigação e apoio? |
+
+O dashboard permite filtrar os resultados por região e estado, comparar a evolução temporal e identificar desigualdades territoriais. A página preditiva apresenta um indicador de priorização, não uma garantia de que o município atingirá ou deixará de atingir a meta.
+
+[Baixar o dashboard em Power BI](docs/dashboard/Relatorio_Indicador_Crianca_Alfabetizada.pbix)
 
 ### O que os dados já mostram
 
@@ -1100,6 +1155,14 @@ As consultas ficam versionadas em `sql/silver/`, com comentários explicando as 
 pip install -r requirements-dev.txt
 ```
 
+**Validação da Bronze** — Great Expectations, sob demanda:
+
+```bash
+python -m quality.run_quality_checks
+```
+
+Lê do S3 quando há credencial válida; do disco local caso contrário. Confira o campo `fonte` no relatório antes de tratá-lo como evidência.
+
 **Machine Learning** — treina o modelo de risco e aplica a toda a base de municípios (seção 17). `src/ml/dataset.py` lê a Gold de `data/model/gold/`, que não é versionada — sincronize do S3 antes do primeiro treino:
 
 ```bash
@@ -1161,6 +1224,7 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 |---|---|
 | Notebook de EDA com saídas executadas | [`notebooks/eda_bronze.ipynb`](notebooks/eda_bronze.ipynb) |
 | Notebook de modelagem de ML com saídas executadas | [`notebooks/02_modelagem_ml_final.ipynb`](notebooks/02_modelagem_ml_final.ipynb) |
+| Dashboard analítico no Power BI | [`docs/dashboard/Relatorio_Indicador_Crianca_Alfabetizada.pbix`](docs/dashboard/Relatorio_Indicador_Crianca_Alfabetizada.pbix) ✅ |
 | Print — `terraform apply` da infraestrutura atual | [`assets/imagens/terraform-apply-atual.png`](assets/imagens/terraform-apply-atual.png) ✅ |
 | Print — Producer enviando eventos para o Kinesis | [`assets/imagens/streaming-producer-kinesis.png`](assets/imagens/streaming-producer-kinesis.png) ✅ |
 | Print — Parquet gerado na Bronze via Lambda | [`assets/imagens/streaming-bronze-parquet-lambda.png`](assets/imagens/streaming-bronze-parquet-lambda.png) ✅ |
@@ -1185,8 +1249,8 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 | Print — importância das features (Random Forest) | [`assets/imagens/ml-top15-features-importantes-randomforest.png`](assets/imagens/ml-top15-features-importantes-randomforest.png) ✅ |
 | Print — método do cotovelo e silhouette (escolha de K) | [`assets/imagens/ml-kmeans-cotovelo-silhouette.png`](assets/imagens/ml-kmeans-cotovelo-silhouette.png) ✅ |
 | Print — percentual de risco por UF | [`assets/imagens/ml-percentual-risco-municipios-uf.png`](assets/imagens/ml-percentual-risco-municipios-uf.png) ✅ |
-| Vídeo — pipeline executando ponta a ponta | ⏳ |
-| Vídeo executivo (até 5 min) | ⏳ |
+| Vídeo — pipeline executando ponta a ponta | [Assistir no YouTube](https://youtu.be/NL5x9WvVbLE?si=2a5InNt2l33NFVHi) ✅ |
+| Vídeo — apresentação executiva (até 5 min) | [Assistir no YouTube](https://youtu.be/cbbCIwyyyeE?si=dMrchYTBM7gRtVv-) ✅ |
 
 ---
 
@@ -1196,10 +1260,19 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 .
 ├── assets/          # imagens de evidência da execução
 ├── data/            # área local das camadas (dados NÃO versionados)
+├── docs/
+│   ├── arquitetura/ # documentação de arquitetura e linhagem dos dados
+│   ├── dashboard/   # dashboard analítico desenvolvido no Power BI
+│   └── finops/      # documentação complementar de Governança e FinOps
 ├── infra/           # infraestrutura como código
 ├── models/          # modelos treinados e métricas de ML (.pkl versionado p/ reprodutibilidade)
 ├── notebooks/       # notebooks de EDA e de modelagem de ML
-├── quality/         # expectativas, validações e relatórios
+├── quality/
+│   ├── run_quality_checks.py   # validação da Bronze (Great Expectations)
+│   ├── expectations/           # suítes declaradas, geradas pelo script
+│   ├── validations/            # resultado detalhado por execução
+│   └── reports/                # relatórios consolidados
+├── reports/         # relatórios gerados de Governança, FinOps e execução
 ├── results/         # saídas de predição do modelo de risco (não versionadas)
 ├── scripts/         # bootstrap e consultas auxiliares
 ├── sql/             # consultas por camada
@@ -1223,26 +1296,6 @@ make streaming-ls       # lista os arquivos gravados no S3 (bronze/silver/gold s
 
 O histórico do repositório é parte da entrega. Nada é commitado direto na `main`.
 
-### Branches
-
-| # | Branch | Objetivo | Tipo | Status |
-|---|---|---|---|---|
-| 1 | `feature/estrutura-inicial` | Estrutura inicial do projeto | `feat` | ✅ |
-| 2 | `feature/configuracao-ambiente` | Configuração do ambiente | `chore` | ✅ |
-| 3 | `feature/configuracao-aplicacao` | Centralização das configurações | `chore` | ✅ |
-| 4 | `feature/extracao-bigquery` | Extração de dados do BigQuery | `feat` | 🚧 |
-| 5 | `feature/camada-bronze` | Implementação da camada Bronze | `feat` | 🚧 |
-| 6 | `feature/upload-s3` | Upload da Bronze para o Amazon S3 | `feat` | ✅ |
-| 7 | `feature/camada-silver` | Implementação da camada Silver | `feat` | ✅ |
-| 8 | `feature/camada-gold` | Implementação da camada Gold | `feat` | ✅ |
-| 9 | `feature/qualidade-dados` | Validações de qualidade | `feat` | ✅ |
-| 10 | `feature/logging-monitoramento` | Logging e monitoramento | `feat` | ⏳ |
-| 11 | `feature/streaming` | Ingestão em streaming (Kinesis + Lambda) | `feat` | ✅ |
-| 12 | `feature/governanca-finops-v2` | Governança, observabilidade e monitoramento de custos | `feat` | ✅ |
-| 13 | `feature/dashboard` | Dashboard analítico | `feat` | ⏳ |
-| 14 | `feature/documentacao` | Documentação técnica e operacional | `docs` | 🚧 |
-| 15 | `feature/ci-cd` *(opcional)* | Integração e entrega contínua | `chore` | ⏳ |
-| 16 | `feature/modelagem-ml` *(entregue via `feature/streaming`)* | Classificação de risco e clustering (Random Forest + K-Means) | `feat` | ✅ |
 
 ### Padrão de commits
 
@@ -1298,31 +1351,17 @@ Toda branch entra na `main` por PR, usando o template em [`.github/PULL_REQUEST_
 | Gold | Modelo de classificação de risco (Random Forest + baseline) | ✅ |
 | Gold | Clusterização de vulnerabilidade educacional (K-Means) | ✅ |
 | Gold | Scripts de ML commitados, com dependências declaradas em `requirements.txt` | ✅ |
-| Gold | Dashboards | ⏳ |
+| Gold | Dashboards | ✅ |
 | Operação | Logging e monitoramento | ✅ |
 | Operação | FinOps e estimativa de custo | ✅ |
-| Consumo | Dashboard analítico | ⏳ |
-| Entrega | README e documentação | 🚧 |
-| Entrega | Evidências de execução | ⏳ |
-| Entrega | Vídeo executivo | ⏳ |
+| Consumo | Dashboard analítico | ✅ |
+| Entrega | README e documentação | ✅ |
+| Entrega | Evidências de execução | ✅ |
+| Entrega | Vídeo executivo | ✅ |
 
 ---
 
-## 23. Equipe
-
-| Nome        | Responsabilidade principal | GitHub |
-|-------------|----------------------------|--------|
-| Amanda      | Governança, observabilidade e FinOps | [@amandacleite](https://github.com/amandacleite) |
-| Antoni Lima | ⏳                         | [@AntoniLima](https://github.com/AntoniLima) |
-| Joviniano   | ⏳                         | [@Joviniano](https://github.com/LiraJoviniano) |
-| Luiza Cunha | ⏳                         | [@luizafcunha](https://github.com/luizafcunha) |
-| Vinicius    | ⏳                         | [@Vinicius](https://github.com/ViniciusMoutinhoDev) |
-
-**Curso:** Pós-graduação FIAP — AI Scientist · **Fase:** 2 — Engenharia de Dados · **Ano:** 2026
-
----
-
-## 24. Licença
+## 23. Licença
 
 Distribuído sob a licença MIT. Veja [LICENSE](LICENSE).
 
