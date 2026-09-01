@@ -1100,7 +1100,11 @@ As consultas ficam versionadas em `sql/silver/`, com comentários explicando as 
 pip install -r requirements-dev.txt
 ```
 
-**Machine Learning** — treina o modelo de risco e aplica a toda a base de municípios (seção 17):
+**Machine Learning** — treina o modelo de risco e aplica a toda a base de municípios (seção 17). `src/ml/dataset.py` lê a Gold de `data/model/gold/`, que não é versionada — sincronize do S3 antes do primeiro treino:
+
+```bash
+aws s3 sync s3://<bucket>/gold/ data/model/gold/ --exclude "streaming/*"
+```
 
 ```bash
 python -m src.ml.train           # treina o Random Forest e o K-Means, salva os .pkl em models/

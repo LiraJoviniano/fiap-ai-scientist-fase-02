@@ -50,8 +50,7 @@ def carregar_dataset() -> pd.DataFrame:
     # na fonte (ver README, seção 14), atingindo 89,6% dos municípios
     # do RS — não é retrocesso educacional genuíno. Mesmo filtro
     # aplicado no notebook (célula 16).
-    df = df[df["sigla_uf"] != "RS"]
-    # Exclui o RS da base de modelagem inteira    
+    df = df[df["sigla_uf"] != "RS"]  
 
     # --------------------------------------------------------------
     # Target de classificação
